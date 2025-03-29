@@ -1,0 +1,13 @@
+﻿<Window x:Class="JungleTracker.ConsentWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Data Consent" Height="200" Width="400" WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <TextBlock Text="Do you consent to the use of your data to train the prediction model?" 
+                   TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Center" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,20">
+            <Button Name="AgreeButton" Content="Agree" Width="100" Margin="10" Click="AgreeButton_Click"/>
+            <Button Name="DisagreeButton" Content="Disagree" Width="100" Margin="10" Click="DisagreeButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

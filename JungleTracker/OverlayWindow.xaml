@@ -1,0 +1,11 @@
+﻿<Window x:Class="JungleTracker.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Overlay" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Topmost="True"
+        ShowInTaskbar="False">
+    <Grid>
+        <Border x:Name="MainBorder" CornerRadius="10" Background="Transparent">
+            <!-- Content removed -->
+        </Border>
+    </Grid>
+</Window>
