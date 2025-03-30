@@ -11,18 +11,26 @@ using System.Windows.Shapes;
 using System.ComponentModel;
 using WPFMessageBox = System.Windows.MessageBox;
 using System.Diagnostics;
+using System.Threading.Tasks;
+using Timer = System.Timers.Timer;
 
 namespace JungleTracker
 {
     public partial class MainWindow : Window
     {
         private OverlayWindow? _overlayWindow = null;
+        private LeagueClientService _leagueClientService;
+        private Timer? _leagueMonitorTimer = null;
+        private bool _wasLeagueRunning = false;
 
         public MainWindow()
         {
             InitializeComponent();
             this.Loaded += MainWindow_Loaded;
             this.Closing += MainWindow_Closing;
+            
+            // Initialize the League Client Service
+            _leagueClientService = new LeagueClientService();
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -35,6 +43,86 @@ namespace JungleTracker
                 WPFMessageBox.Show("Consent not given. The application will now close.", "Consent Required", MessageBoxButton.OK, MessageBoxImage.Warning);
                 this.Close();
             }
+            
+            // Start monitoring for League of Legends
+            StartMonitoringForLeague();
+        }
+
+        // Monitor for League of Legends being launched
+        private void StartMonitoringForLeague(int checkIntervalMs = 2000)
+        {
+            // Stop any existing timer
+            _leagueMonitorTimer?.Stop();
+            _leagueMonitorTimer?.Dispose();
+            
+            // Initialize with current state
+            _wasLeagueRunning = IsLeagueGameRunning();
+            
+            // Create and start new timer
+            _leagueMonitorTimer = new Timer(checkIntervalMs);
+            _leagueMonitorTimer.Elapsed += (s, e) => 
+            {
+                // Check on UI thread
+                this.Dispatcher.Invoke(async () => 
+                {
+                    bool isRunningNow = IsLeagueGameRunning();
+                    
+                    // If app just started running
+                    if (isRunningNow && !_wasLeagueRunning)
+                    {
+                        await OnLeagueLaunchedAsync();
+                    }
+                    // If app just closed
+                    else if (!isRunningNow && _wasLeagueRunning)
+                    {
+                        OnLeagueClosed();
+                    }
+                    
+                    _wasLeagueRunning = isRunningNow;
+                });
+            };
+            _leagueMonitorTimer.AutoReset = true;
+            _leagueMonitorTimer.Start();
+            
+            Debug.WriteLine("Started monitoring for League of Legends");
+        }
+        
+        // Handle League of Legends launch
+        private async Task OnLeagueLaunchedAsync()
+        {
+            Debug.WriteLine("League of Legends has launched!");
+            
+            // Wait a bit for the game to initialize
+            await Task.Delay(5000);
+            
+            // Try to get game data (will retry several times)
+            bool gameDataFound = await _leagueClientService.TryGetGameDataAsync();
+            
+            if (gameDataFound)
+            {
+                Debug.WriteLine($"Enemy jungler detected: {_leagueClientService.EnemyJunglerChampionName}");
+                
+                // If overlay is already open, update it
+                if (_overlayWindow != null)
+                {
+                    _overlayWindow.SetEnemyJunglerInfo(
+                        _leagueClientService.EnemyJunglerChampionName, 
+                        _leagueClientService.ActivePlayerTeam == "ORDER" ? "CHAOS" : "ORDER");
+                }
+            }
+            else
+            {
+                Debug.WriteLine("Could not retrieve game data after multiple attempts");
+            }
+        }
+        
+        // Handle League of Legends close
+        private void OnLeagueClosed()
+        {
+            Debug.WriteLine("League of Legends has closed");
+            
+            // Optional: Close the overlay when the game closes
+            // _overlayWindow?.Close();
         }
 
         private void MinimapScaleSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -45,7 +133,7 @@ namespace JungleTracker
             }
         }
 
-        private void ToggleOverlayButton_Click(object sender, RoutedEventArgs e)
+        private async void ToggleOverlayButton_Click(object sender, RoutedEventArgs e)
         {
             if (_overlayWindow == null)
             {
@@ -60,6 +148,19 @@ namespace JungleTracker
                 // Create overlay window
                 _overlayWindow = new OverlayWindow();
                 _overlayWindow.Closed += OverlayWindow_Closed;
+
+                // Try to get enemy jungler info if game is running
+                if (IsLeagueGameRunning())
+                {
+                    bool gameDataFound = await _leagueClientService.TryGetGameDataAsync(3, 1000);
+                    if (gameDataFound)
+                    {
+                        // Pass both champion name and team
+                        _overlayWindow.SetEnemyJunglerInfo(
+                            _leagueClientService.EnemyJunglerChampionName,
+                            _leagueClientService.ActivePlayerTeam == "ORDER" ? "CHAOS" : "ORDER");
+                    }
+                }
 
                 // Configure and show overlay
                 string location = ((ComboBoxItem)MinimapLocationComboBox.SelectedItem).Content.ToString() ?? "Bottom Right";
@@ -96,6 +197,8 @@ namespace JungleTracker
         private void MainWindow_Closing(object? sender, CancelEventArgs e)
         {
             _overlayWindow?.Close();
+            _leagueMonitorTimer?.Stop();
+            _leagueMonitorTimer?.Dispose();
         }
     }
 } 

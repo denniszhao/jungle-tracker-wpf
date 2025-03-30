@@ -9,6 +9,8 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading.Tasks; // Needed for Task.Run
+using System.Windows.Media.Imaging;
+using System.Windows.Media; // Add for Colors
 
 namespace JungleTracker
 {
@@ -82,6 +84,11 @@ namespace JungleTracker
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_LAYERED = 0x00080000;
         private const int WS_EX_TOOLWINDOW = 0x00000080; // Additional style to prevent showing in alt+tab
+
+        // Add this field to store enemy jungler information
+        private string _enemyJunglerChampionName;
+        private string _enemyTeam;
+        private System.Windows.Controls.Image _championPortrait;
 
         public OverlayWindow()
         {
@@ -234,7 +241,7 @@ namespace JungleTracker
         }
 
         // --- UI and Lifecycle ---
-        public async void ShowOverlay(string location, int scale)
+        public void ShowOverlay(string location, int scale)
         {
             // Calculate size and initial position
             _overlaySize = MIN_MINIMAP_SIZE + (scale / 100.0) * (MAX_MINIMAP_SIZE - MIN_MINIMAP_SIZE);
@@ -355,6 +362,100 @@ namespace JungleTracker
         {
             if (_screenshotTimer != null && milliseconds > 0)
                 _screenshotTimer.Interval = milliseconds;
+        }
+
+        // Add this method to set enemy jungler information
+        public void SetEnemyJunglerInfo(string championName, string team = "")
+        {
+            _enemyJunglerChampionName = championName;
+            _enemyTeam = team;
+            Debug.WriteLine($"Overlay now tracking enemy jungler: {_enemyJunglerChampionName} on {_enemyTeam} team");
+            
+            // Display the champion portrait on the overlay
+            DisplayChampionPortrait();
+        }
+
+        // Method to display the champion portrait based on team
+        private void DisplayChampionPortrait()
+        {
+            if (string.IsNullOrEmpty(_enemyJunglerChampionName))
+                return;
+            
+            try
+            {
+                string championFileName = _enemyJunglerChampionName;
+                
+                // Special case for Wukong/MonkeyKing
+                if (_enemyJunglerChampionName == "Wukong" || _enemyJunglerChampionName == "MonkeyKing")
+                {
+                    championFileName = "MonkeyKing";
+                }
+                
+                // Determine the resource name based on team
+                string resourceFolder = _enemyTeam == "CHAOS" ? "champions-altered-red" : "champions-altered-blue";
+                string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
+                
+                // Load the image from embedded resources
+                System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                System.IO.Stream resourceStream = assembly.GetManifestResourceStream(resourceName);
+                
+                if (resourceStream == null)
+                {
+                    // Try to list available resources for debugging
+                    string[] resources = assembly.GetManifestResourceNames();
+                    Debug.WriteLine("Available resources:");
+                    foreach (string resource in resources)
+                    {
+                        Debug.WriteLine($"  {resource}");
+                    }
+                    
+                    Debug.WriteLine($"Champion portrait not found as embedded resource: {resourceName}");
+                    return;
+                }
+                
+                // Create the image control if it doesn't exist
+                if (_championPortrait == null)
+                {
+                    _championPortrait = new System.Windows.Controls.Image
+                    {
+                        Width = 46,
+                        Height = 46,
+                        Margin = new Thickness(5),
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Top
+                    };
+                    
+                    // Add drop shadow effect
+                    System.Windows.Media.Effects.DropShadowEffect effect = new System.Windows.Media.Effects.DropShadowEffect
+                    {
+                        ShadowDepth = 3,
+                        Direction = 315,
+                        Opacity = 0.6,
+                        BlurRadius = 5,
+                        Color = Colors.Black
+                    };
+                    _championPortrait.Effect = effect;
+                    
+                    // Add to the overlay
+                    MainBorder.Child = _championPortrait;
+                }
+                
+                // Load the image from stream
+                BitmapImage bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.StreamSource = resourceStream;
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+                
+                _championPortrait.Source = bitmap;
+                _championPortrait.Visibility = Visibility.Visible;
+                
+                Debug.WriteLine($"Champion portrait loaded from embedded resource: {resourceName}");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error loading champion portrait: {ex.Message}");
+            }
         }
     }
 }
