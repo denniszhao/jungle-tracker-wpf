@@ -85,7 +85,7 @@ namespace JungleTracker
             string activePlayerChampionName = "";
             string enemyTeam = "";
             
-            // 2. Find active player's team and determine enemy team
+            // 2. Find active player's team and deter`e enemy team
             var allPlayers = root.GetProperty("allPlayers");
             foreach (var player in allPlayers.EnumerateArray())
             {

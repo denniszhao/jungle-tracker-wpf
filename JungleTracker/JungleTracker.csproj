@@ -550,9 +550,9 @@
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\Cassiopeia.png" />
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\Chogath.png" />
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\Corki.png" />
-    <Content Include="Assets\Champions\champions-altered-red\Darius.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <EmbeddedResource Include="Assets\Champions\champions-altered-red\Darius.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </EmbeddedResource>
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\Diana.png" />
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\Draven.png" />
     <EmbeddedResource Include="Assets\Champions\champions-altered-red\DrMundo.png" />
@@ -707,7 +707,8 @@
 
   <ItemGroup>
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
-    <PackageReference Include="OpenCvSharp4.Windows" Version="4.9.0.20240103" />
+    <PackageReference Include="OpenCvSharp4.Windows" Version="4.10.0.20241108" />
+    <PackageReference Include="OpenCvSharp4.Extensions" Version="4.10.0.20241108" />
     <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
     <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
   </ItemGroup>

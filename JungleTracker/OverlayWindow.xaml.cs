@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.Threading.Tasks; // Needed for Task.Run
 using System.Windows.Media.Imaging;
 using System.Windows.Media; // Add for Colors
+using System.Windows.Media.Animation; // Add for animations
 
 namespace JungleTracker
 {
@@ -32,6 +33,9 @@ namespace JungleTracker
         private const double MIN_MINIMAP_SIZE = 280.0;
         private const double MAX_MINIMAP_SIZE = 560.0;
         private const int SCREENSHOT_INTERVAL = 10000;
+        
+        // --- New animation constants ---
+        private const int FADE_DURATION_MS = 3000;
         
         // --- Instance variables ---
         private Timer _screenshotTimer;
@@ -90,6 +94,16 @@ namespace JungleTracker
         private string _enemyTeam;
         private System.Windows.Controls.Image _championPortrait;
 
+        // Add fields for animation
+        private Storyboard _fadeOutStoryboard;
+        private System.Drawing.Point? _lastKnownLocation;
+
+        // Add field for the minimap scanner service
+        private MinimapScannerService _minimapScanner;
+
+        // Add latest screenshot field
+        private Bitmap _latestMinimapScreenshot;
+        
         public OverlayWindow()
         {
             // These MUST be set before InitializeComponent() is called
@@ -112,9 +126,12 @@ namespace JungleTracker
             
             SetupScreenshotFolder();
 
+            // Create the minimap scanner service
+            _minimapScanner = new MinimapScannerService();
+
             // Timer setup - will capture using PrintWindow
             _screenshotTimer = new Timer(SCREENSHOT_INTERVAL);
-            _screenshotTimer.Elapsed += (s, e) => Dispatcher.Invoke(AttemptCapture); 
+            _screenshotTimer.Elapsed += OnScreenshotTimerElapsed; 
             _screenshotTimer.AutoReset = true;
 
             this.Closed += OnOverlayClosed; // Use named method for cleanup
@@ -156,6 +173,138 @@ namespace JungleTracker
 
             _leagueProcessId = (uint)processes[0].Id;
             return focusedProcessId == _leagueProcessId;
+        }
+
+        // Handle screenshot timer elapsed - NEW METHOD
+        private void OnScreenshotTimerElapsed(object sender, ElapsedEventArgs e)
+        {
+            Dispatcher.Invoke(() => {
+                // First capture the screenshot using the existing method
+                AttemptCapture();
+                
+                // Then process the screenshot if we have a valid scanner and champion info
+                if (_minimapScanner != null && !string.IsNullOrEmpty(_enemyJunglerChampionName) && _latestMinimapScreenshot != null)
+                {
+                    ProcessMinimapScreenshot();
+                }
+            });
+        }
+
+        // New method to process the minimap screenshot
+        private void ProcessMinimapScreenshot()
+        {
+            try
+            {
+                // Make sure we have the right champion template loaded
+                if (!_minimapScanner.SetChampionTemplate(_enemyJunglerChampionName, _enemyTeam))
+                {
+                    Debug.WriteLine($"Failed to set champion template for {_enemyJunglerChampionName}");
+                    return;
+                }
+
+                // Scan for the champion
+                System.Drawing.Point? matchLocation = _minimapScanner.ScanForChampion(_latestMinimapScreenshot);
+
+                if (matchLocation.HasValue)
+                {
+                    // Champion found - update position and make invisible
+                    UpdateChampionPortraitPosition(matchLocation.Value);
+                    _lastKnownLocation = matchLocation;
+                    
+                    // Make champion portrait invisible since jungler is visible on minimap
+                    if (_championPortrait != null)
+                    {
+                        // Stop any fade animation in progress
+                        StopFadeOutAnimation();
+                        _championPortrait.Opacity = 0.0;
+                    }
+                    
+                    Debug.WriteLine($"Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}");
+                }
+                else
+                {
+                    // Champion not found - start or continue fade out from last known location
+                    if (_lastKnownLocation.HasValue && _championPortrait != null)
+                    {
+                        // Only start fading if the portrait is fully visible
+                        if (_championPortrait.Opacity == 1.0)
+                        {
+                            StartFadeOutAnimation();
+                        }
+                        // Otherwise let any current fade continue
+                    }
+                    
+                    Debug.WriteLine("Champion not found in minimap");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error processing minimap screenshot: {ex.Message}");
+            }
+        }
+
+        // Update the position of the champion portrait based on the match location
+        private void UpdateChampionPortraitPosition(System.Drawing.Point matchLocation)
+        {
+            if (_championPortrait == null)
+                return;
+                
+            // Convert match location to overlay coordinates
+            // The match location is relative to the minimap screenshot
+            double x = matchLocation.X - (_championPortrait.Width / 2);
+            double y = matchLocation.Y - (_championPortrait.Height / 2);
+            
+            // Ensure we stay within the overlay bounds
+            x = Math.Max(0, Math.Min(x, _overlaySize - _championPortrait.Width));
+            y = Math.Max(0, Math.Min(y, _overlaySize - _championPortrait.Height));
+            
+            // Update the position
+            _championPortrait.Margin = new Thickness(x, y, 0, 0);
+        }
+
+        // Animation methods
+        private void StartFadeOutAnimation()
+        {
+            if (_championPortrait == null)
+                return;
+                
+            // Make sure the portrait is visible before starting fade
+            _championPortrait.Opacity = 1.0;
+            _championPortrait.Visibility = Visibility.Visible;
+            
+            // Create a new storyboard for the fade out animation
+            _fadeOutStoryboard = new Storyboard();
+            
+            // Create the opacity animation
+            DoubleAnimation fadeOutAnimation = new DoubleAnimation
+            {
+                From = 1.0,
+                To = 0.0,
+                Duration = new Duration(TimeSpan.FromMilliseconds(FADE_DURATION_MS)),
+                AutoReverse = false
+            };
+            
+            // Set the target property
+            Storyboard.SetTarget(fadeOutAnimation, _championPortrait);
+            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(System.Windows.Controls.Image.OpacityProperty));
+            
+            // Add the animation to the storyboard
+            _fadeOutStoryboard.Children.Add(fadeOutAnimation);
+            
+            // Start the animation
+            _fadeOutStoryboard.Begin();
+            
+            Debug.WriteLine("Started fade out animation");
+        }
+
+        private void StopFadeOutAnimation()
+        {
+            if (_fadeOutStoryboard != null)
+            {
+                _fadeOutStoryboard.Stop();
+                _fadeOutStoryboard = null;
+                Debug.WriteLine("Stopped fade out animation");
+            }
         }
 
         // BitBlt-based capture
@@ -230,6 +379,10 @@ namespace JungleTracker
                         savedFilePath = System.IO.Path.Combine(_screenshotFolder,
                                      $"minimap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
                         minimapImage.Save(savedFilePath, ImageFormat.Png);
+                        
+                        // Store the latest minimap screenshot for processing
+                        _latestMinimapScreenshot?.Dispose();
+                        _latestMinimapScreenshot = new Bitmap(minimapImage);
                     }
                 }
             }
@@ -353,6 +506,14 @@ namespace JungleTracker
             _screenshotTimer?.Stop();
             _screenshotTimer?.Dispose();
             
+            // Dispose of the minimap scanner
+            _minimapScanner?.Dispose();
+            _minimapScanner = null;
+            
+            // Dispose of the latest screenshot
+            _latestMinimapScreenshot?.Dispose();
+            _latestMinimapScreenshot = null;
+            
             // Clear capture handle
             _captureHwnd = IntPtr.Zero;
         }
@@ -373,6 +534,9 @@ namespace JungleTracker
             
             // Display the champion portrait on the overlay
             DisplayChampionPortrait();
+            
+            // Reset any last known location
+            _lastKnownLocation = null;
         }
 
         // Method to display the champion portrait based on team
@@ -449,6 +613,9 @@ namespace JungleTracker
                 
                 _championPortrait.Source = bitmap;
                 _championPortrait.Visibility = Visibility.Visible;
+                
+                // Start with the champion portrait fully visible
+                _championPortrait.Opacity = 1.0;
                 
                 Debug.WriteLine($"Champion portrait loaded from embedded resource: {resourceName}");
             }
