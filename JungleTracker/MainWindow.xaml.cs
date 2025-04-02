@@ -152,9 +152,11 @@ namespace JungleTracker
                 // Try to get enemy jungler info if game is running
                 if (IsLeagueGameRunning())
                 {
-                    bool gameDataFound = await _leagueClientService.TryGetGameDataAsync(3, 1000);
+                    Debug.WriteLine("Getting enemy jungler info after overlay click");
+                    bool gameDataFound = await _leagueClientService.TryGetGameDataAsync();
                     if (gameDataFound)
                     {
+                        Debug.WriteLine($"Enemy jungler detected, passing to Overlay: {_leagueClientService.EnemyJunglerChampionName}");
                         // Pass both champion name and team
                         _overlayWindow.SetEnemyJunglerInfo(
                             _leagueClientService.EnemyJunglerChampionName,

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Security.Cryptography.X509Certificates;
 using System.Net.Security;
 using System.Net;
+using System.Diagnostics;
 
 namespace JungleTracker
 {
@@ -32,11 +33,13 @@ namespace JungleTracker
         public async Task<bool> TryGetGameDataAsync(int maxRetries = 10, int retryDelayMs = 5000)
         {
             int attempts = 0;
+            Debug.WriteLine($"Trying to get game data... will try {maxRetries} times");
             
             while (attempts < maxRetries)
             {
                 try
                 {
+                    Debug.WriteLine($"Fetching game data, attempt {attempts + 1}");
                     var success = await FetchAndParseGameDataAsync();
                     if (success)
                     {
@@ -46,7 +49,7 @@ namespace JungleTracker
                 catch (Exception ex)
                 {
                     // API might not be ready yet
-                    Console.WriteLine($"Attempt {attempts + 1}: Error fetching game data: {ex.Message}");
+                    Debug.WriteLine($"Attempt {attempts + 1}: Error fetching game data: {ex.Message}");
                 }
                 
                 attempts++;
@@ -110,7 +113,8 @@ namespace JungleTracker
                 var spell1 = summonerSpells.GetProperty("summonerSpellOne").GetProperty("displayName").GetString();
                 var spell2 = summonerSpells.GetProperty("summonerSpellTwo").GetProperty("displayName").GetString();
                 
-                if (spell1 == "Smite" || spell2 == "Smite")
+                // Needs to be Contains because Smite can be upgraded now to "Primal/Unleashed Smite" 
+                if (spell1.Contains("Smite") || spell2.Contains("Smite"))
                 {
                     EnemyJunglerChampionName = player.GetProperty("championName").GetString();
                     

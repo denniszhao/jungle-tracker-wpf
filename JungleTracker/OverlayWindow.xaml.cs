@@ -177,7 +177,7 @@ namespace JungleTracker
                 
                 if (width <= 0 || height <= 0)
                 {
-                    Console.WriteLine("Invalid window dimensions");
+                    Debug.WriteLine("Invalid window dimensions");
                     return;
                 }
 
@@ -202,7 +202,7 @@ namespace JungleTracker
                         
                         if (!success)
                         {
-                            Console.WriteLine("PrintWindow failed");
+                            Debug.WriteLine("PrintWindow failed");
                             return;
                         }
                     }
@@ -217,7 +217,7 @@ namespace JungleTracker
                         minimapY + (int)_overlaySize > height ||
                         (int)_overlaySize <= 0)
                     {
-                        Console.WriteLine("Calculated minimap coordinates are out of bounds");
+                        Debug.WriteLine("Calculated minimap coordinates are out of bounds");
                         return; // Don't proceed if crop is invalid
                     }
                     
@@ -236,7 +236,7 @@ namespace JungleTracker
             catch (Exception ex)
             {
                 savedFilePath = null;
-                Console.WriteLine($"Error during capture/processing: {ex.Message}");
+                Debug.WriteLine($"Error during capture/processing: {ex.Message}");
             }
         }
 
@@ -282,7 +282,7 @@ namespace JungleTracker
                     if (processes.Length == 0)
                     {
                         // For testing purposes, allow any window with a title
-                        Console.WriteLine("League of Legends not found. Will try to find any visible window for testing...");
+                        Debug.WriteLine("League of Legends not found. Will try to find any visible window for testing...");
                         Process[] allProcesses = Process.GetProcesses();
                         foreach (var proc in allProcesses)
                         {
@@ -290,7 +290,7 @@ namespace JungleTracker
                             {
                                 _captureHwnd = proc.MainWindowHandle;
                                 _leagueProcessId = (uint)proc.Id;
-                                Console.WriteLine($"Using '{proc.MainWindowTitle}' window for testing capture.");
+                                Debug.WriteLine($"Using '{proc.MainWindowTitle}' window for testing capture.");
                                 break;
                             }
                         }
@@ -300,7 +300,7 @@ namespace JungleTracker
                         // League of Legends found
                         _captureHwnd = processes[0].MainWindowHandle;
                         _leagueProcessId = (uint)processes[0].Id;
-                        Console.WriteLine("League of Legends window found. Starting capture...");
+                        Debug.WriteLine("League of Legends window found. Starting capture...");
                     }
                     
                     if (_captureHwnd == IntPtr.Zero)
@@ -392,7 +392,7 @@ namespace JungleTracker
                 }
                 
                 // Determine the resource name based on team
-                string resourceFolder = _enemyTeam == "CHAOS" ? "champions-altered-red" : "champions-altered-blue";
+                string resourceFolder = _enemyTeam == "CHAOS" ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
                 
                 // Load the image from embedded resources
