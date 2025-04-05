@@ -35,7 +35,8 @@ namespace JungleTracker
         private const int SCREENSHOT_INTERVAL = 1000;
         
         // --- New animation constants ---
-        private const int FADE_DURATION_MS = 7500; 
+        private const int FADE_DURATION_MS = 10000;
+        private const double FINAL_FADE_OPACITY = 0.3; // Or 0.2 for semi-transparent
         
         // --- Instance variables ---
         private Timer _screenshotTimer;
@@ -91,6 +92,7 @@ namespace JungleTracker
 
         // Add fields for animation
         private Storyboard? _fadeOutStoryboard;
+        private bool _isPortraitFadingOut = false;
         private System.Drawing.Point? _lastKnownLocation;
 
         // Add field for the minimap scanner service
@@ -190,7 +192,7 @@ namespace JungleTracker
         // New method to process the minimap screenshot
         private void ProcessMinimapScreenshot()
         {
-            if (ChampionPortraitControl == null) return; // Safety check for the UserControl
+            if (ChampionPortraitControl == null) return;
 
             try
             {
@@ -205,41 +207,51 @@ namespace JungleTracker
 
                 if (matchLocation.HasValue)
                 {
-                    // Champion found
-                    UpdateChampionPortraitPosition(matchLocation.Value); // Update control's position
-                    _lastKnownLocation = matchLocation; // Store the location
+                    // --- Champion found ---
+                    _lastKnownLocation = matchLocation;
 
-                    // Directly target ChampionPortraitControl to make it invisible
-                    StopFadeOutAnimation(); // Stop any animation on the control
-                    ChampionPortraitControl.Opacity = 0.0; // Make control fully transparent
-                    ChampionPortraitControl.Visibility = Visibility.Collapsed; // Also hide it to prevent potential layout shifts
-
-                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}");
-                }
-                else // Champion NOT found
-                {
-                    // Check for last known location and target the ChampionPortraitControl directly
-                    if (_lastKnownLocation.HasValue) // Removed '&& wrapperBorder != null' which was always false
+                    // Stop fade-out if it was happening and reset the flag
+                    if (_isPortraitFadingOut)
                     {
-                        Debug.WriteLine("[OverlayWindow] Champion not found. Showing portrait at last known location.");
+                        StopFadeOutAnimation(); // This now correctly sets _isPortraitFadingOut = false
+                    }
 
-                        StopFadeOutAnimation(); // Stop any fade on the control
+                    // Hide the control immediately
+                    ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                    ChampionPortraitControl.Opacity = 0.0; // Ensure fully transparent when hidden
 
-                        // Ensure the control is positioned correctly
+                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait.");
+                }
+                else // --- Champion NOT found ---
+                {
+                    if (_lastKnownLocation.HasValue)
+                    {
+                        // Update position regardless of animation state
                         UpdateChampionPortraitPosition(_lastKnownLocation.Value);
 
-                        // Make the control visible and opaque
-                        ChampionPortraitControl.Visibility = Visibility.Visible;
-                        ChampionPortraitControl.Opacity = 1.0;
-
-                        // Optional: Start fade out immediately (current behavior)
-                        // Consider adding a delay or only fading after N seconds if desired
-                        StartFadeOutAnimation();
+                        // Only start the fade-out if it's not already faded/fading
+                        if (!_isPortraitFadingOut)
+                        {
+                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out.");
+                             // Make it visible and opaque before starting animation
+                             ChampionPortraitControl.Visibility = Visibility.Visible;
+                             ChampionPortraitControl.Opacity = 1.0;
+                             StartFadeOutAnimation(); // This will set _isPortraitFadingOut = true
+                        }
+                        else
+                        {
+                             // Already fading or faded - just ensure position is updated (done above)
+                             Debug.WriteLine("[OverlayWindow] Champion not found, portrait already fading or faded.");
+                        }
                     }
-                    else // No last known location
+                    else // --- No last known location ---
                     {
                         Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
-                        // Ensure portrait is hidden if no location known
+                        // Ensure portrait is hidden and state is reset
+                        if (_isPortraitFadingOut)
+                        {
+                             StopFadeOutAnimation();
+                        }
                         ChampionPortraitControl.Visibility = Visibility.Collapsed;
                         ChampionPortraitControl.Opacity = 0.0;
                     }
@@ -248,9 +260,12 @@ namespace JungleTracker
             catch (Exception ex)
             {
                 Debug.WriteLine($"[OverlayWindow] Error processing minimap screenshot: {ex.Message}");
-                 // Optionally hide portrait on error
                  if (ChampionPortraitControl != null)
                  {
+                     if (_isPortraitFadingOut) // Stop animation on error too
+                     {
+                         StopFadeOutAnimation();
+                     }
                      ChampionPortraitControl.Visibility = Visibility.Collapsed;
                      ChampionPortraitControl.Opacity = 0.0;
                  }
@@ -298,47 +313,61 @@ namespace JungleTracker
         // Animation methods
         private void StartFadeOutAnimation()
         {
-            if (ChampionPortraitControl == null) return; // Safety check
+            // Removed _isPortraitFadingOut check here, ProcessMinimapScreenshot ensures it's only called when needed
+            if (ChampionPortraitControl == null) return;
 
-            // --- Directly target the ChampionPortraitControl ---
-            ChampionPortraitControl.Visibility = Visibility.Visible; // Ensure control is visible
-            ChampionPortraitControl.Opacity = 1.0; // Ensure starting opacity on the control
-
+            _isPortraitFadingOut = true; // Set the flag *before* starting
             _fadeOutStoryboard = new Storyboard();
             DoubleAnimation fadeOutAnimation = new DoubleAnimation
             {
                 From = 1.0,
-                To = 0.2,
+                To = FINAL_FADE_OPACITY, // Fade to the desired final opacity
                 Duration = new Duration(TimeSpan.FromMilliseconds(FADE_DURATION_MS)),
-                AutoReverse = false
+                // FillBehavior defaults to HoldEnd, which is what we want now
             };
 
-            // Target the ChampionPortraitControl's OpacityProperty
             Storyboard.SetTarget(fadeOutAnimation, ChampionPortraitControl);
-            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(OpacityProperty)); // UserControl's Opacity
+            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(OpacityProperty));
 
-            // Optionally collapse when done fading
+            // --- Modified Completed Handler ---
+            // We no longer hide the control or reset the flag here.
+            // We just clear the storyboard reference *if* the flag is still true
+            // (meaning StopFadeOutAnimation wasn't called prematurely).
             fadeOutAnimation.Completed += (s, e) => {
-                 if (ChampionPortraitControl != null && ChampionPortraitControl.Opacity < 0.1)
+                 if (_isPortraitFadingOut) // Check if still supposed to be fading
                  {
-                    ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                    _fadeOutStoryboard = null; // Animation is done, clear reference
+                    Debug.WriteLine($"[OverlayWindow] Fade out completed. Opacity held at {FINAL_FADE_OPACITY}.");
+                 } else {
+                    Debug.WriteLine("[OverlayWindow] Fade out completed, but StopFadeOutAnimation was called before completion.");
                  }
             };
 
             _fadeOutStoryboard.Children.Add(fadeOutAnimation);
-            _fadeOutStoryboard.Begin();
+            _fadeOutStoryboard.Begin(ChampionPortraitControl, HandoffBehavior.SnapshotAndReplace, true);
             Debug.WriteLine("[OverlayWindow] Started fade out animation on ChampionPortraitControl");
-            // --- End of corrected logic ---
         }
 
         private void StopFadeOutAnimation()
         {
-            if (_fadeOutStoryboard != null)
-            {
-                _fadeOutStoryboard.Stop();
-                _fadeOutStoryboard = null;
-                Debug.WriteLine("Stopped fade out animation");
-            }
+             // Check the flag first
+             if (_isPortraitFadingOut) // Check if it's supposed to be fading/faded
+             {
+                 if (_fadeOutStoryboard != null) // Check if animation is actively running
+                 {
+                     // Stop the animation storyboard on the control
+                     _fadeOutStoryboard.Stop(ChampionPortraitControl);
+                     _fadeOutStoryboard = null; // Clear storyboard reference
+                     Debug.WriteLine("[OverlayWindow] Stopped active fade out animation.");
+                 } else {
+                     // Storyboard was null, meaning animation already completed and was holding.
+                     // We still need to reset the flag.
+                      Debug.WriteLine("[OverlayWindow] Stopping fade state (animation already completed).");
+                 }
+
+                 _isPortraitFadingOut = false; // Reset the flag *only* when stopping
+             }
+             // If not fading (_isPortraitFadingOut == false), do nothing.
         }
 
         // BitBlt-based capture
@@ -575,7 +604,7 @@ namespace JungleTracker
 
             // Reset state - make sure it starts hidden until scan logic makes it visible
             _lastKnownLocation = null;
-            StopFadeOutAnimation(); // Ensure no lingering animation
+            StopFadeOutAnimation(); // Ensure no lingering animation and reset flag
             ChampionPortraitControl.Opacity = 0.0;
             ChampionPortraitControl.Visibility = Visibility.Collapsed;
         }
