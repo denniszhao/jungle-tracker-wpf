@@ -12,7 +12,7 @@ namespace JungleTracker
         // Constants for template matching - Thresholds often need tuning!
         // For CCoeffNormed (higher is better match): Start high (e.g., 0.7-0.8) and adjust.
         // For SqDiffNormed (lower is better match): Start low (e.g., 0.1-0.2) and adjust.
-        private const double DEFAULT_MATCH_THRESHOLD = 0.67; // Adjusted default for CCoeffNormed, REQUIRES TESTING!
+        private const double DEFAULT_MATCH_THRESHOLD = 0.6; // Adjusted default for CCoeffNormed, REQUIRES TESTING!
         private const TemplateMatchModes DEFAULT_MATCH_MODE = TemplateMatchModes.CCoeffNormed;
 
         // Current matching configuration

@@ -32,7 +32,7 @@ namespace JungleTracker
         // --- Core constants ---
         private const double MIN_MINIMAP_SIZE = 280.0;
         private const double MAX_MINIMAP_SIZE = 560.0;
-        private const int SCREENSHOT_INTERVAL = 500;
+        private const int SCREENSHOT_INTERVAL = 1000;
         
         // --- New animation constants ---
         private const int FADE_DURATION_MS = 1500; 
@@ -89,20 +89,15 @@ namespace JungleTracker
         private const int WS_EX_LAYERED = 0x00080000;
         private const int WS_EX_TOOLWINDOW = 0x00000080; // Additional style to prevent showing in alt+tab
 
-        // Add this field to store enemy jungler information
-        private string _enemyJunglerChampionName;
-        private string _enemyTeam;
-        private System.Windows.Controls.Image _championPortrait;
-
         // Add fields for animation
-        private Storyboard _fadeOutStoryboard;
+        private Storyboard? _fadeOutStoryboard;
         private System.Drawing.Point? _lastKnownLocation;
 
         // Add field for the minimap scanner service
         private MinimapScannerService _minimapScanner;
 
         // Add latest screenshot field
-        private Bitmap _latestMinimapScreenshot;
+        private Bitmap? _latestMinimapScreenshot;
         
         public OverlayWindow()
         {
@@ -176,14 +171,16 @@ namespace JungleTracker
         }
 
         // Handle screenshot timer elapsed - NEW METHOD
-        private void OnScreenshotTimerElapsed(object sender, ElapsedEventArgs e)
+        private void OnScreenshotTimerElapsed(object? sender, ElapsedEventArgs e)
         {
             Dispatcher.Invoke(() => {
-                // First capture the screenshot using the existing method
                 AttemptCapture();
-                
-                // Then process the screenshot if we have a valid scanner and champion info
-                if (_minimapScanner != null && !string.IsNullOrEmpty(_enemyJunglerChampionName) && _latestMinimapScreenshot != null)
+
+                // Access control via x:Name from XAML
+                if (_minimapScanner != null &&
+                    ChampionPortraitControl != null && // Add null check
+                    !string.IsNullOrEmpty(ChampionPortraitControl.ChampionName) &&
+                    _latestMinimapScreenshot != null)
                 {
                     ProcessMinimapScreenshot();
                 }
@@ -193,101 +190,121 @@ namespace JungleTracker
         // New method to process the minimap screenshot
         private void ProcessMinimapScreenshot()
         {
+            if (ChampionPortraitControl == null) return; // Safety check for the UserControl
+
             try
             {
-                // Make sure we have the right champion template loaded
-                if (!_minimapScanner.SetChampionTemplate(_enemyJunglerChampionName, _enemyTeam))
+                // Ensure the template is set based on the control's properties
+                if (!_minimapScanner.SetChampionTemplate(ChampionPortraitControl.ChampionName, ChampionPortraitControl.Team))
                 {
-                    Debug.WriteLine($"Failed to set champion template for {_enemyJunglerChampionName}");
+                    Debug.WriteLine($"[OverlayWindow] Failed to set champion template for {ChampionPortraitControl.ChampionName}");
                     return;
                 }
 
-                // Scan for the champion
                 System.Drawing.Point? matchLocation = _minimapScanner.ScanForChampion(_latestMinimapScreenshot);
 
                 if (matchLocation.HasValue)
                 {
-                    // Champion found - update position and make invisible
-                    UpdateChampionPortraitPosition(matchLocation.Value);
-                    _lastKnownLocation = matchLocation;
-                    
-                    // Make champion portrait invisible since jungler is visible on minimap
-                    if (_championPortrait != null)
-                    {
-                        // Stop any fade animation in progress
-                        StopFadeOutAnimation();
-                        _championPortrait.Opacity = 0.0;
-                    }
-                    
-                    Debug.WriteLine($"Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}");
+                    // Champion found
+                    UpdateChampionPortraitPosition(matchLocation.Value); // Update control's position
+                    _lastKnownLocation = matchLocation; // Store the location
+
+                    // Directly target ChampionPortraitControl to make it invisible
+                    StopFadeOutAnimation(); // Stop any animation on the control
+                    ChampionPortraitControl.Opacity = 0.0; // Make control fully transparent
+                    ChampionPortraitControl.Visibility = Visibility.Collapsed; // Also hide it to prevent potential layout shifts
+
+                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}");
                 }
-                else
+                else // Champion NOT found
                 {
-                    // If we have a last known location and a portrait exists...
-                    if (_lastKnownLocation.HasValue && _championPortrait != null)
+                    // Check for last known location and target the ChampionPortraitControl directly
+                    if (_lastKnownLocation.HasValue) // Removed '&& wrapperBorder != null' which was always false
                     {
-                        Debug.WriteLine("Champion not found. Showing portrait at last known location.");
+                        Debug.WriteLine("[OverlayWindow] Champion not found. Showing portrait at last known location.");
 
-                        // Stop any previous fade out that might be running
-                        StopFadeOutAnimation();
+                        StopFadeOutAnimation(); // Stop any fade on the control
 
-                        // Ensure the portrait is positioned at the last known location
+                        // Ensure the control is positioned correctly
                         UpdateChampionPortraitPosition(_lastKnownLocation.Value);
 
-                        // Make the portrait fully visible at the last known location
-                        _championPortrait.Opacity = 1.0;
+                        // Make the control visible and opaque
+                        ChampionPortraitControl.Visibility = Visibility.Visible;
+                        ChampionPortraitControl.Opacity = 1.0;
 
-                        // Optional: Consider starting a fade-out timer or animation here
-                        // if you want it to disappear after a while.
-                        // For now, it will just stay visible until the champion is found again.
-                        StartFadeOutAnimation(); // You could potentially start the fade here if desired
+                        // Optional: Start fade out immediately (current behavior)
+                        // Consider adding a delay or only fading after N seconds if desired
+                        StartFadeOutAnimation();
                     }
-                    else
+                    else // No last known location
                     {
-                        // No last known location, or no portrait - do nothing
-                        Debug.WriteLine("Champion not found, and no last known location to show.");
+                        Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
+                        // Ensure portrait is hidden if no location known
+                        ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                        ChampionPortraitControl.Opacity = 0.0;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Error processing minimap screenshot: {ex.Message}");
+                Debug.WriteLine($"[OverlayWindow] Error processing minimap screenshot: {ex.Message}");
+                 // Optionally hide portrait on error
+                 if (ChampionPortraitControl != null)
+                 {
+                     ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                     ChampionPortraitControl.Opacity = 0.0;
+                 }
             }
         }
 
         // Update the position of the champion portrait based on the match location
         private void UpdateChampionPortraitPosition(System.Drawing.Point matchLocation)
         {
-            if (_championPortrait == null)
-                return;
-                
-            // Convert match location to overlay coordinates
-            // The match location is relative to the minimap screenshot
-            double x = matchLocation.X - (_championPortrait.Width / 2);
-            double y = matchLocation.Y - (_championPortrait.Height / 2);
-            
-            // Ensure we stay within the overlay bounds
-            x = Math.Max(0, Math.Min(x, _overlaySize - _championPortrait.Width));
-            y = Math.Max(0, Math.Min(y, _overlaySize - _championPortrait.Height));
-            
-            // Update the position
-            _championPortrait.Margin = new Thickness(x, y, 0, 0);
+            if (ChampionPortraitControl == null) return; // Safety check
+
+            // --- Use the UserControl's actual dimensions for centering ---
+            double controlWidth = ChampionPortraitControl.ActualWidth > 0 ? ChampionPortraitControl.ActualWidth : ChampionPortraitControl.Width;
+            double controlHeight = ChampionPortraitControl.ActualHeight > 0 ? ChampionPortraitControl.ActualHeight : ChampionPortraitControl.Height;
+
+            // Fallback if layout hasn't completed, use RenderSize or specified Width/Height
+             if (controlWidth <= 0 || controlHeight <= 0)
+             {
+                 if (ChampionPortraitControl.RenderSize.Width > 0 && ChampionPortraitControl.RenderSize.Height > 0) {
+                    controlWidth = ChampionPortraitControl.RenderSize.Width;
+                    controlHeight = ChampionPortraitControl.RenderSize.Height;
+                 } else {
+                    Debug.WriteLine($"[OverlayWindow] Warning: Cannot determine valid dimensions for ChampionPortraitControl in UpdatePosition. Using default size ({ChampionPortraitControl.Width}x{ChampionPortraitControl.Height}).");
+                    controlWidth = ChampionPortraitControl.Width; // Use defined Width/Height as last resort
+                    controlHeight = ChampionPortraitControl.Height;
+                     if (controlWidth <= 0 || controlHeight <= 0) {
+                          Debug.WriteLine($"[OverlayWindow] Error: ChampionPortraitControl Width/Height are invalid ({controlWidth}x{controlHeight}). Cannot update position.");
+                          return; // Cannot position if size is invalid
+                     }
+                 }
+             }
+            // --- End of dimension calculation ---
+
+            double x = matchLocation.X - (controlWidth / 2);
+            double y = matchLocation.Y - (controlHeight / 2);
+
+            // Ensure staying within overlay bounds (using control's dimensions)
+            x = Math.Max(0, Math.Min(x, _overlaySize - controlWidth));
+            y = Math.Max(0, Math.Min(y, _overlaySize - controlHeight));
+
+            // Update the Margin of the ChampionPortraitControl itself
+            ChampionPortraitControl.Margin = new Thickness(x, y, 0, 0);
         }
 
         // Animation methods
         private void StartFadeOutAnimation()
         {
-            if (_championPortrait == null)
-                return;
-                
-            // Make sure the portrait is visible before starting fade
-            _championPortrait.Opacity = 1.0;
-            _championPortrait.Visibility = Visibility.Visible;
-            
-            // Create a new storyboard for the fade out animation
+            if (ChampionPortraitControl == null) return; // Safety check
+
+            // --- Directly target the ChampionPortraitControl ---
+            ChampionPortraitControl.Visibility = Visibility.Visible; // Ensure control is visible
+            ChampionPortraitControl.Opacity = 1.0; // Ensure starting opacity on the control
+
             _fadeOutStoryboard = new Storyboard();
-            
-            // Create the opacity animation
             DoubleAnimation fadeOutAnimation = new DoubleAnimation
             {
                 From = 1.0,
@@ -295,18 +312,23 @@ namespace JungleTracker
                 Duration = new Duration(TimeSpan.FromMilliseconds(FADE_DURATION_MS)),
                 AutoReverse = false
             };
-            
-            // Set the target property
-            Storyboard.SetTarget(fadeOutAnimation, _championPortrait);
-            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(System.Windows.Controls.Image.OpacityProperty));
-            
-            // Add the animation to the storyboard
+
+            // Target the ChampionPortraitControl's OpacityProperty
+            Storyboard.SetTarget(fadeOutAnimation, ChampionPortraitControl);
+            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(OpacityProperty)); // UserControl's Opacity
+
+            // Optionally collapse when done fading
+            fadeOutAnimation.Completed += (s, e) => {
+                 if (ChampionPortraitControl != null && ChampionPortraitControl.Opacity < 0.1)
+                 {
+                    ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                 }
+            };
+
             _fadeOutStoryboard.Children.Add(fadeOutAnimation);
-            
-            // Start the animation
             _fadeOutStoryboard.Begin();
-            
-            Debug.WriteLine("Started fade out animation");
+            Debug.WriteLine("[OverlayWindow] Started fade out animation on ChampionPortraitControl");
+            // --- End of corrected logic ---
         }
 
         private void StopFadeOutAnimation()
@@ -538,103 +560,24 @@ namespace JungleTracker
         }
 
         // Add this method to set enemy jungler information
-        public void SetEnemyJunglerInfo(string championName, string team = "")
+        public void SetEnemyJunglerInfo(string championName, string team)
         {
-            _enemyJunglerChampionName = championName;
-            _enemyTeam = team;
-            Debug.WriteLine($"Overlay now tracking enemy jungler: {_enemyJunglerChampionName} on {_enemyTeam} team");
-            
-            // Display the champion portrait on the overlay
-            DisplayChampionPortrait();
-            
-            // Reset any last known location
-            _lastKnownLocation = null;
-        }
+            if (ChampionPortraitControl == null)
+            {
+                 Debug.WriteLine("[OverlayWindow] Error: ChampionPortraitControl is null in SetEnemyJunglerInfo.");
+                 return;
+            }
+             Debug.WriteLine($"[OverlayWindow] Setting enemy jungler info: {championName} ({team})");
 
-        // Method to display the champion portrait based on team
-        private void DisplayChampionPortrait()
-        {
-            if (string.IsNullOrEmpty(_enemyJunglerChampionName))
-                return;
-            
-            try
-            {
-                string championFileName = _enemyJunglerChampionName;
-                
-                // Special case for Wukong/MonkeyKing
-                if (_enemyJunglerChampionName == "Wukong" || _enemyJunglerChampionName == "MonkeyKing")
-                {
-                    championFileName = "MonkeyKing";
-                }
-                
-                // Determine the resource name based on team
-                string resourceFolder = _enemyTeam == "CHAOS" ? "champions_altered_red" : "champions_altered_blue";
-                string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
-                
-                // Load the image from embedded resources
-                System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                System.IO.Stream resourceStream = assembly.GetManifestResourceStream(resourceName);
-                
-                if (resourceStream == null)
-                {
-                    // Try to list available resources for debugging
-                    string[] resources = assembly.GetManifestResourceNames();
-                    Debug.WriteLine("Available resources:");
-                    foreach (string resource in resources)
-                    {
-                        Debug.WriteLine($"  {resource}");
-                    }
-                    
-                    Debug.WriteLine($"Champion portrait not found as embedded resource: {resourceName}");
-                    return;
-                }
-                
-                // Create the image control if it doesn't exist
-                if (_championPortrait == null)
-                {
-                    _championPortrait = new System.Windows.Controls.Image
-                    {
-                        Width = 46,
-                        Height = 46,
-                        Margin = new Thickness(5),
-                        HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-                        VerticalAlignment = System.Windows.VerticalAlignment.Top
-                    };
-                    
-                    // Add drop shadow effect
-                    System.Windows.Media.Effects.DropShadowEffect effect = new System.Windows.Media.Effects.DropShadowEffect
-                    {
-                        ShadowDepth = 3,
-                        Direction = 315,
-                        Opacity = 0.6,
-                        BlurRadius = 5,
-                        Color = Colors.Black
-                    };
-                    _championPortrait.Effect = effect;
-                    
-                    // Add to the overlay
-                    MainBorder.Child = _championPortrait;
-                }
-                
-                // Load the image from stream
-                BitmapImage bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.StreamSource = resourceStream;
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.EndInit();
-                
-                _championPortrait.Source = bitmap;
-                _championPortrait.Visibility = Visibility.Visible;
-                
-                // Start with the champion portrait fully visible
-                _championPortrait.Opacity = 1.0;
-                
-                Debug.WriteLine($"Champion portrait loaded from embedded resource: {resourceName}");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Error loading champion portrait: {ex.Message}");
-            }
+            // Set properties on the UserControl instance
+            ChampionPortraitControl.ChampionName = championName;
+            ChampionPortraitControl.Team = team;
+
+            // Reset state - make sure it starts hidden until scan logic makes it visible
+            _lastKnownLocation = null;
+            StopFadeOutAnimation(); // Ensure no lingering animation
+            ChampionPortraitControl.Opacity = 0.0;
+            ChampionPortraitControl.Visibility = Visibility.Collapsed;
         }
     }
 }
