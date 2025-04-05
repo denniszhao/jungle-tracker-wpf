@@ -48,6 +48,7 @@ namespace JungleTracker
 
             try
             {
+                // Special casing for Wukong 
                 string championFileName = championName == "Wukong" ? "MonkeyKing" : championName;
                 string resourceFolder = team == "CHAOS" ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";

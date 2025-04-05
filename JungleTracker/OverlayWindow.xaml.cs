@@ -32,10 +32,10 @@ namespace JungleTracker
         // --- Core constants ---
         private const double MIN_MINIMAP_SIZE = 280.0;
         private const double MAX_MINIMAP_SIZE = 560.0;
-        private const int SCREENSHOT_INTERVAL = 10000;
+        private const int SCREENSHOT_INTERVAL = 500;
         
         // --- New animation constants ---
-        private const int FADE_DURATION_MS = 3000;
+        private const int FADE_DURATION_MS = 1500; 
         
         // --- Instance variables ---
         private Timer _screenshotTimer;
@@ -223,18 +223,30 @@ namespace JungleTracker
                 }
                 else
                 {
-                    // Champion not found - start or continue fade out from last known location
+                    // If we have a last known location and a portrait exists...
                     if (_lastKnownLocation.HasValue && _championPortrait != null)
                     {
-                        // Only start fading if the portrait is fully visible
-                        if (_championPortrait.Opacity == 1.0)
-                        {
-                            StartFadeOutAnimation();
-                        }
-                        // Otherwise let any current fade continue
+                        Debug.WriteLine("Champion not found. Showing portrait at last known location.");
+
+                        // Stop any previous fade out that might be running
+                        StopFadeOutAnimation();
+
+                        // Ensure the portrait is positioned at the last known location
+                        UpdateChampionPortraitPosition(_lastKnownLocation.Value);
+
+                        // Make the portrait fully visible at the last known location
+                        _championPortrait.Opacity = 1.0;
+
+                        // Optional: Consider starting a fade-out timer or animation here
+                        // if you want it to disappear after a while.
+                        // For now, it will just stay visible until the champion is found again.
+                        StartFadeOutAnimation(); // You could potentially start the fade here if desired
                     }
-                    
-                    Debug.WriteLine("Champion not found in minimap");
+                    else
+                    {
+                        // No last known location, or no portrait - do nothing
+                        Debug.WriteLine("Champion not found, and no last known location to show.");
+                    }
                 }
             }
             catch (Exception ex)
