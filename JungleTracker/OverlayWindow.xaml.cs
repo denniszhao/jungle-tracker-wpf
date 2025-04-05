@@ -35,7 +35,7 @@ namespace JungleTracker
         private const int SCREENSHOT_INTERVAL = 1000;
         
         // --- New animation constants ---
-        private const int FADE_DURATION_MS = 1500; 
+        private const int FADE_DURATION_MS = 7500; 
         
         // --- Instance variables ---
         private Timer _screenshotTimer;
@@ -308,7 +308,7 @@ namespace JungleTracker
             DoubleAnimation fadeOutAnimation = new DoubleAnimation
             {
                 From = 1.0,
-                To = 0.0,
+                To = 0.2,
                 Duration = new Duration(TimeSpan.FromMilliseconds(FADE_DURATION_MS)),
                 AutoReverse = false
             };

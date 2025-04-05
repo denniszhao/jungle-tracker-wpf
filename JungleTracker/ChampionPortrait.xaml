@@ -13,9 +13,9 @@
     <!-- Root Border for background, border, effects, and targeting -->
     <Border x:Name="PortraitBorder"
             BorderBrush="Yellow"
-            BorderThickness="2"
-            Width="{Binding ActualHeight, ElementName=RootControl}"
-            Height="{Binding ActualWidth, ElementName=RootControl}" >
+            BorderThickness="4"
+            Width="46" Height="46"
+            CornerRadius="23">
         <Border.Effect>
             <DropShadowEffect ShadowDepth="3" Direction="315" Opacity="0.6" BlurRadius="5" Color="Black"/>
         </Border.Effect>
