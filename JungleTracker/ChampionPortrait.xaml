@@ -7,23 +7,33 @@
              mc:Ignorable="d"
              d:DesignHeight="46" d:DesignWidth="46"
              x:Name="RootControl"
-             Visibility="Collapsed" Opacity="0">
+             Visibility="Collapsed" Opacity="0"
+             ClipToBounds="False">
     <!-- Start hidden and transparent -->
+
+    <UserControl.Resources>
+        <!-- Warning Storyboard Removed -->
+    </UserControl.Resources>
 
     <!-- Root Border for background, border, effects, and targeting -->
     <Border x:Name="PortraitBorder"
             BorderBrush="Yellow"
             BorderThickness="4"
             Width="46" Height="46"
-            CornerRadius="23">
+            CornerRadius="23"
+            ClipToBounds="False">
         <Border.Effect>
             <DropShadowEffect ShadowDepth="3" Direction="315" Opacity="0.6" BlurRadius="5" Color="Black"/>
         </Border.Effect>
 
-        <!-- Image to display the actual champion portrait -->
-        <Image x:Name="PortraitImage"
-               Stretch="Fill"
-               Source="{Binding FallbackImage, ElementName=RootControl}"/>
-        <!-- Using a FallbackImage property for design-time preview -->
+        <!-- Grid is no longer strictly necessary but harmless -->
+        <Grid ClipToBounds="False">
+            <!-- Warning Effect Ellipse Removed -->
+
+            <!-- Image to display the actual champion portrait -->
+            <Image x:Name="PortraitImage"
+                   Stretch="Fill"
+                   Source="{Binding FallbackImage, ElementName=RootControl}"/>
+        </Grid>
     </Border>
 </UserControl>

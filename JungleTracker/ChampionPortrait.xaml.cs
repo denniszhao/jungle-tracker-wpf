@@ -38,13 +38,10 @@ namespace JungleTracker
         public ChampionPortrait()
         {
             InitializeComponent();
-            // Example fallback image (replace with a generic icon if desired)
-            // FallbackImage = LoadBitmapImageFromResource("JungleTracker.Assets.some_default_icon.png");
         }
 
         private static void OnChampionInfoChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            // When ChampionName or Team changes, update the image source
             if (d is ChampionPortrait portrait)
             {
                 portrait.UpdatePortraitImage();
@@ -53,7 +50,6 @@ namespace JungleTracker
 
         private void UpdatePortraitImage()
         {
-            // Basic validation
             if (string.IsNullOrEmpty(ChampionName) || string.IsNullOrEmpty(Team))
             {
                 PortraitImage.Source = null;
@@ -66,12 +62,13 @@ namespace JungleTracker
                 string championFileName = ChampionName;
                 // Handle Wukong naming inconsistency if necessary
                 if (championFileName == "Wukong") championFileName = "MonkeyKing";
+                if (championFileName == "Kha'Zix") championFileName = "Khazix";
 
                 string resourceFolder = Team.Equals("CHAOS", StringComparison.OrdinalIgnoreCase) ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
 
                 BitmapImage? bitmap = LoadBitmapImageFromResource(resourceName);
-                PortraitImage.Source = bitmap; // Set the image source
+                PortraitImage.Source = bitmap;
 
                 if (bitmap == null)
                 {
@@ -85,11 +82,10 @@ namespace JungleTracker
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ChampionPortrait] Error loading champion portrait image: {ex.Message}");
-                PortraitImage.Source = null; // Clear on error
+                PortraitImage.Source = null;
             }
         }
 
-        // Helper to load BitmapImage from embedded resources
         private BitmapImage? LoadBitmapImageFromResource(string resourceName)
         {
             ArgumentNullException.ThrowIfNull(resourceName);
@@ -100,22 +96,20 @@ namespace JungleTracker
                 {
                     if (resourceStream == null)
                     {
-                        // Log missing resource if needed. UpdatePortraitImage handles the null return.
                         return null;
                     }
 
                     BitmapImage bitmap = new BitmapImage();
                     bitmap.BeginInit();
                     bitmap.StreamSource = resourceStream;
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad; // Load fully into memory
+                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
                     bitmap.EndInit();
-                    bitmap.Freeze(); // Freeze for performance and cross-thread access
+                    bitmap.Freeze();
                     return bitmap;
                 }
             }
             catch (Exception ex)
             {
-                // Log specific exception for loading this resource
                 Debug.WriteLine($"[ChampionPortrait] Exception loading resource '{resourceName}': {ex.Message}");
                 return null;
             }

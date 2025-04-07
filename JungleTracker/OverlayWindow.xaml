@@ -7,15 +7,17 @@
         mc:Ignorable="d"
         Title="JungleTracker Overlay" Height="300" Width="300"
         AllowsTransparency="True" WindowStyle="None" Background="Transparent"
-        ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize">
+        ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize"
+        ClipToBounds="False">
 
-    <Border x:Name="MainBorder" Background="Transparent">
+    <Border x:Name="MainBorder" Background="Transparent" ClipToBounds="False">
 
         <local:ChampionPortrait x:Name="ChampionPortraitControl"
                                 Width="46" Height="46"
                                 HorizontalAlignment="Left"
                                 VerticalAlignment="Top"
-                                Margin="5" />
+                                Margin="5"
+                                ClipToBounds="False" />
 
     </Border>
 </Window>
