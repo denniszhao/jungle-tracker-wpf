@@ -576,7 +576,44 @@ namespace JungleTracker
                 _screenshotTimer.Interval = milliseconds;
         }
 
-        // Add this method to set enemy jungler information
+        // Add this method to handle the game closing
+        public void HandleGameClosed()
+        {
+            // Ensure this runs on the UI thread if called from elsewhere
+             if (!Dispatcher.CheckAccess())
+             {
+                 Dispatcher.Invoke(HandleGameClosed);
+                 return;
+             }
+
+            Debug.WriteLine("[OverlayWindow] Handling game closed event.");
+
+            // 1. Stop any ongoing fade-out animation and reset its state flag
+            StopFadeOutAnimation();
+
+            // 2. Hide the portrait control immediately
+            if (ChampionPortraitControl != null)
+            {
+                ChampionPortraitControl.Visibility = Visibility.Collapsed;
+                ChampionPortraitControl.Opacity = 0.0;
+
+                // 3. Optionally clear the champion info (triggers image source nulling)
+                 ChampionPortraitControl.ChampionName = string.Empty;
+                 ChampionPortraitControl.Team = string.Empty;
+            }
+
+            // 4. Reset the last known location
+            _lastKnownLocation = null;
+
+            // 5. Clear the template in the scanner service
+            _minimapScanner?.ClearCurrentTemplate();
+
+             // 6. Optionally stop the timer? Or let it run idly? Stopping might be safer.
+             // _screenshotTimer?.Stop();
+             // Debug.WriteLine("[OverlayWindow] Screenshot timer stopped due to game close.");
+        }
+
+        // Make sure SetEnemyJunglerInfo potentially restarts the timer if stopped above
         public void SetEnemyJunglerInfo(string championName, string team)
         {
              if (ChampionPortraitControl == null) return; // Simplified null check
@@ -586,9 +623,16 @@ namespace JungleTracker
             ChampionPortraitControl.Team = team;
 
             _lastKnownLocation = null;
-            StopFadeOutAnimation(); // This stops the fade, no longer stops warning implicitly
+            StopFadeOutAnimation();
             ChampionPortraitControl.Opacity = 0.0;
             ChampionPortraitControl.Visibility = Visibility.Collapsed;
+
+            // If timer was stopped in HandleGameClosed, restart it here
+            // if (_screenshotTimer != null && !_screenshotTimer.Enabled)
+            // {
+            //     _screenshotTimer.Start();
+            //     Debug.WriteLine("[OverlayWindow] Screenshot timer restarted by SetEnemyJunglerInfo.");
+            // }
         }
     }
 }

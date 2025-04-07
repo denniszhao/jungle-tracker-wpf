@@ -20,10 +20,10 @@ namespace JungleTracker
         private TemplateMatchModes _matchMode;
 
         // Champion template (BGR) and its Alpha Mask (if available)
-        private Mat _championTemplate;
-        private Mat _championTemplateMask;
-        private string _currentChampionName;
-        private string _currentTeam;
+        private Mat? _championTemplate;
+        private Mat? _championTemplateMask;
+        private string? _currentChampionName;
+        private string? _currentTeam;
 
         public MinimapScannerService(double matchThreshold = DEFAULT_MATCH_THRESHOLD,
                                     TemplateMatchModes matchMode = DEFAULT_MATCH_MODE)
@@ -37,103 +37,145 @@ namespace JungleTracker
         /// </summary>
         public bool SetChampionTemplate(string championName, string team)
         {
-            if (string.IsNullOrEmpty(championName)) return false;
+            if (string.IsNullOrEmpty(championName) || string.IsNullOrEmpty(team))
+            {
+                Debug.WriteLine("[Scanner] SetChampionTemplate called with null/empty championName or team.");
+                return false;
+            }
 
-            // If we already have this template loaded, don't reload
-            if (championName == _currentChampionName && team == _currentTeam && _championTemplate != null)
+            // Check if the requested template is already loaded and valid
+            // Added null checks and IsDisposed checks for more safety
+            if (championName.Equals(_currentChampionName, StringComparison.Ordinal) &&
+                team.Equals(_currentTeam, StringComparison.OrdinalIgnoreCase) &&
+                _championTemplate != null && !_championTemplate.IsDisposed && !_championTemplate.Empty())
+            {
+                // It's already loaded and valid, no need to reload.
+                // Debug.WriteLine($"[Scanner] Template for {championName} ({team}) already loaded."); // Optional: Reduce log spam
                 return true;
+            }
 
-            // Clean up existing template and mask
-            DisposeTemplateAndMask(); // Helper to clean up both
+            Debug.WriteLine($"[Scanner] Request to load template for NEW/DIFFERENT champion/team: {championName} ({team}). Previous: {_currentChampionName} ({_currentTeam})");
+
+            // --- Explicitly Dispose BEFORE loading ---
+            Debug.WriteLine("[Scanner] Disposing existing template and mask (if any)...");
+            DisposeTemplateAndMask(); // This sets _championTemplate and _championTemplateMask to null
+            Debug.WriteLine($"[Scanner] Disposal complete.");
+            // ---
+
+            Mat? newTemplate = null;
+            Mat? newMask = null;
+            bool success = false;
 
             try
             {
-                // Special casing for Wukong 
-                string championFileName = championName == "Wukong" ? "MonkeyKing" : championName == "Kha'Zix" ? "Khazix" : championName;
-                string resourceFolder = team == "CHAOS" ? "champions_altered_red" : "champions_altered_blue";
+                // Special casing for champion names
+                string championFileName = championName;
+                if (championFileName == "Wukong") championFileName = "MonkeyKing";
+                else if (championFileName == "Kha'Zix") championFileName = "Khazix";
+                // Add others if needed
+
+                string resourceFolder = team.Equals("CHAOS", StringComparison.OrdinalIgnoreCase) ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
+                Debug.WriteLine($"[Scanner] Loading resource: {resourceName}");
 
                 Assembly assembly = Assembly.GetExecutingAssembly();
                 using (Stream? resourceStream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (resourceStream == null)
                     {
-                        Debug.WriteLine($"Error: Resource stream not found for {resourceName}");
-                        return false; // Template not found
+                        Debug.WriteLine($"[Scanner] Error: Resource stream not found for {resourceName}");
+                        _currentChampionName = null; // Clear state as loading failed
+                        _currentTeam = null;
+                        return false; // Template resource not found
                     }
 
                     using (Bitmap bitmap = new Bitmap(resourceStream))
                     {
-                        // Load the template Mat, attempting to preserve the alpha channel
-                        using (Mat templateMatWithPotentialAlpha = BitmapToMat(bitmap, preserveAlpha: true))
+                        // Use a temporary variable for the potentially-alpha Mat
+                        using (Mat? tempMat = BitmapToMat(bitmap, preserveAlpha: true))
                         {
-                            if (templateMatWithPotentialAlpha == null || templateMatWithPotentialAlpha.Empty())
+                            if (tempMat == null || tempMat.Empty())
                             {
-                                Debug.WriteLine($"Error: Failed to convert bitmap to Mat for {resourceName}");
+                                Debug.WriteLine($"[Scanner] Error: Failed to convert bitmap to Mat for {resourceName}");
+                                _currentChampionName = null; // Clear state
+                                _currentTeam = null;
                                 return false;
                             }
 
-                            Debug.WriteLine($"Loaded template Mat for {resourceName}. Original size: {bitmap.Width}x{bitmap.Height}, Channels: {templateMatWithPotentialAlpha.Channels()}");
+                            Debug.WriteLine($"[Scanner] Loaded temporary Mat for {resourceName}. Channels: {tempMat.Channels()}");
 
-                            // Check if the loaded Mat has an Alpha channel (4 channels)
-                            if (templateMatWithPotentialAlpha.Channels() == 4)
+                            if (tempMat.Channels() == 4)
                             {
-                                Debug.WriteLine("Template has 4 channels (BGRA). Extracting mask.");
-                                // Split the BGRA channels
-                                Mat[] channels = Cv2.Split(templateMatWithPotentialAlpha);
+                                Debug.WriteLine("[Scanner] Extracting BGR template and Alpha mask from 4 channels.");
+                                Mat[] channels = Cv2.Split(tempMat);
                                 try
                                 {
-                                    // Last channel is alpha (index 3)
-                                    _championTemplateMask = channels[3]; // Keep this channel
+                                    // IMPORTANT: Clone the mask, don't just assign reference
+                                    newMask = channels[3].Clone();
+                                    // Create the BGR template by merging
+                                    newTemplate = new Mat();
+                                    Cv2.Merge(new[] { channels[0], channels[1], channels[2] }, newTemplate);
 
-                                    // Merge the BGR channels (0, 1, 2) into the template
-                                    _championTemplate = new Mat();
-                                    Cv2.Merge(new[] { channels[0], channels[1], channels[2] }, _championTemplate);
-
-                                    // Dispose the intermediate BGR channels now that they are merged
-                                    channels[0].Dispose();
-                                    channels[1].Dispose();
-                                    channels[2].Dispose();
-                                    Debug.WriteLine($"Successfully created BGR template ({_championTemplate.Width}x{_championTemplate.Height}) and Alpha mask ({_championTemplateMask.Width}x{_championTemplateMask.Height}).");
+                                    Debug.WriteLine($"[Scanner] Successfully created NEW BGR template ({newTemplate?.Width}x{newTemplate?.Height}) and Alpha mask ({newMask?.Width}x{newMask?.Height}).");
                                 }
-                                catch(Exception splitEx)
+                                finally
                                 {
-                                     Debug.WriteLine($"Error during channel split/merge: {splitEx.Message}");
-                                     // Clean up if partially created
-                                     DisposeTemplateAndMask();
-                                     // Dispose any remaining channels from the split
-                                     foreach (var channel in channels) channel?.Dispose();
-                                     return false;
+                                    // Dispose all split channels regardless of success/failure in try block
+                                    foreach (var channel in channels) channel?.Dispose();
                                 }
                             }
-                            else if (templateMatWithPotentialAlpha.Channels() == 3)
+                            else if (tempMat.Channels() == 3)
                             {
-                                Debug.WriteLine("Template has 3 channels (BGR). No mask will be used.");
-                                // No alpha channel, just use the template as is (it's already BGR)
-                                _championTemplate = templateMatWithPotentialAlpha.Clone();
-                                _championTemplateMask = null; // Ensure mask is null
+                                Debug.WriteLine("[Scanner] Cloning 3-channel BGR template. No mask generated.");
+                                // IMPORTANT: Clone the template, don't just assign reference
+                                newTemplate = tempMat.Clone();
+                                newMask = null; // Ensure mask is null
                             }
                             else
                             {
-                                Debug.WriteLine($"Error: Template Mat has unexpected number of channels: {templateMatWithPotentialAlpha.Channels()}");
+                                Debug.WriteLine($"[Scanner] Error: Temporary Mat has unexpected number of channels: {tempMat.Channels()}");
+                                _currentChampionName = null; // Clear state
+                                _currentTeam = null;
                                 return false; // Unexpected channel count
                             }
-                        } // Dispose templateMatWithPotentialAlpha here
+                        } // Dispose tempMat here
+                    } // Dispose bitmap here
+                } // Dispose resourceStream here
 
-                        _currentChampionName = championName;
-                        _currentTeam = team;
+                // --- Assign new Mats AFTER successful loading ---
+                _championTemplate = newTemplate; // Assign the successfully created new template
+                _championTemplateMask = newMask; // Assign the successfully created new mask (or null)
+                _currentChampionName = championName;
+                _currentTeam = team;
+                success = true;
+                // ---
 
-                        Debug.WriteLine($"Champion template set: {championName} ({team}). Template Size: {GetTemplateSize()}. Mask Present: {_championTemplateMask != null && !_championTemplateMask.Empty()}");
-                        return true;
-                    }
-                }
+                Debug.WriteLine($"[Scanner] NEW Champion template set: {championName} ({team}). Template Valid: {!_championTemplate?.IsDisposed ?? false}. Mask Valid: {!_championTemplateMask?.IsDisposed ?? true}"); // Updated log
+                return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Error loading champion template {championName}: {ex.Message}");
+                Debug.WriteLine($"[Scanner] General Error loading champion template {championName}: {ex.Message}");
                 Debug.WriteLine(ex.StackTrace);
-                DisposeTemplateAndMask();
+                // Clean up potentially created new Mats on error
+                newTemplate?.Dispose();
+                newMask?.Dispose();
+                // Ensure instance variables are null after failure
+                _championTemplate = null; // Already done by DisposeTemplateAndMask below, but explicit
+                _championTemplateMask = null;
+                _currentChampionName = null;
+                _currentTeam = null;
                 return false;
+            }
+            finally
+            {
+                // If loading failed before assignment, ensure the instance variables are cleaned up.
+                if (!success)
+                {
+                    DisposeTemplateAndMask(); // Ensure instance vars are null and disposed
+                     _currentChampionName = null; // Make sure name/team are cleared on any failure path
+                     _currentTeam = null;
+                }
             }
         }
 
@@ -143,10 +185,14 @@ namespace JungleTracker
         /// <returns>Point with center coordinates if found, null if not found or error.</returns>
         public System.Drawing.Point? ScanForChampion(Bitmap minimapImage)
         {
-            // Check if a valid template is loaded
-            if (_championTemplate == null || _championTemplate.Empty() || minimapImage == null)
+            // Check if a valid template is loaded (Added IsDisposed checks)
+            if (_championTemplate == null || _championTemplate.IsDisposed || _championTemplate.Empty() || minimapImage == null)
             {
-                Debug.WriteLine($"ScanForChampion failed: Template not loaded (_championTemplate is null/empty: {_championTemplate == null || _championTemplate.Empty()}) or minimap image is null (minimapImage is null: {minimapImage == null}).");
+                // Be more specific in logging why it failed
+                if (_championTemplate == null) Debug.WriteLine("[Scanner] ScanForChampion failed: Template is null.");
+                else if (_championTemplate.IsDisposed) Debug.WriteLine("[Scanner] ScanForChampion failed: Template is disposed.");
+                else if (_championTemplate.Empty()) Debug.WriteLine("[Scanner] ScanForChampion failed: Template is empty.");
+                if (minimapImage == null) Debug.WriteLine("[Scanner] ScanForChampion failed: Minimap image is null.");
                 return null;
             }
 
@@ -193,7 +239,7 @@ namespace JungleTracker
                     using (Mat result = new Mat(resultRows, resultCols, MatType.CV_32FC1))
                     {
                         // Perform template matching
-                        bool useMask = _championTemplateMask != null && !_championTemplateMask.Empty() && _championTemplateMask.Size() == _championTemplate.Size();
+                        bool useMask = _championTemplateMask != null && !_championTemplateMask.IsDisposed && !_championTemplateMask.Empty() && _championTemplateMask.Size() == _championTemplate.Size();
                         if (useMask)
                         {
                             Debug.WriteLine("Using alpha mask for template matching.");
@@ -201,7 +247,7 @@ namespace JungleTracker
                         }
                         else
                         {
-                            if (_championTemplateMask != null && !_championTemplateMask.Empty() && _championTemplateMask.Size() != _championTemplate.Size())
+                            if (_championTemplateMask != null && !_championTemplateMask.IsDisposed && !_championTemplateMask.Empty() && _championTemplateMask.Size() != _championTemplate.Size())
                             {
                                 Debug.WriteLine("Warning: Mask exists but size does not match template. Performing regular matching.");
                             }
@@ -414,14 +460,14 @@ namespace JungleTracker
             string championFileName = _currentChampionName == "Wukong" ? "MonkeyKing" : _currentChampionName;
             string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
             string size = _championTemplate != null ? $"{_championTemplate.Width}x{_championTemplate.Height}" : "N/A";
-            string maskStatus = (_championTemplateMask != null && !_championTemplateMask.Empty()) ? "Yes" : "No";
+            string maskStatus = (_championTemplateMask != null && !_championTemplateMask.IsDisposed && !_championTemplateMask.Empty()) ? "Yes" : "No";
 
             return $"Template: {resourceName}, Size: {size}, Mask Present: {maskStatus}";
         }
 
         public System.Drawing.Size GetTemplateSize()
         {
-            if (_championTemplate == null || _championTemplate.Empty())
+            if (_championTemplate == null || _championTemplate.IsDisposed || _championTemplate.Empty())
                 return System.Drawing.Size.Empty;
 
             return new System.Drawing.Size(_championTemplate.Width, _championTemplate.Height);
@@ -434,11 +480,14 @@ namespace JungleTracker
         // --- IDisposable Implementation ---
         private void DisposeTemplateAndMask()
         {
-             // Use ?. operator for safe disposal
+            // Use ?. operator for safe disposal
             _championTemplate?.Dispose();
-            _championTemplate = null;
+            _championTemplate = null; // Set to null after disposing
             _championTemplateMask?.Dispose();
-            _championTemplateMask = null;
+            _championTemplateMask = null; // Set to null after disposing
+             // Optionally clear name/team here too, or rely on SetChampionTemplate logic
+             // _currentChampionName = null;
+             // _currentTeam = null;
         }
 
         public void Dispose()
@@ -447,6 +496,17 @@ namespace JungleTracker
             // No other managed resources to dispose in this specific class example
             // Call GC.SuppressFinalize if you add a finalizer (~MinimapScannerService())
             // GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Explicitly disposes the current template and resets tracking variables.
+        /// </summary>
+        public void ClearCurrentTemplate()
+        {
+            Debug.WriteLine("[Scanner] Clearing current template and state explicitly.");
+            DisposeTemplateAndMask(); // Disposes Mats and sets fields to null
+            _currentChampionName = null;
+            _currentTeam = null;
         }
     }
 }

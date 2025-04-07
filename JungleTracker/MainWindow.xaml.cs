@@ -119,10 +119,17 @@ namespace JungleTracker
         // Handle League of Legends close
         private void OnLeagueClosed()
         {
-            Debug.WriteLine("League of Legends has closed");
-            
-            // Optional: Close the overlay when the game closes
-            // _overlayWindow?.Close();
+            Debug.WriteLine("League of Legends game process has closed");
+
+            // Tell the overlay window to clear its state
+            // Use Dispatcher to ensure UI access is safe, though HandleGameClosed checks itself too
+            this.Dispatcher.Invoke(() =>
+            {
+                _overlayWindow?.HandleGameClosed();
+            });
+
+            // Note: We are NOT closing the overlay window itself here, just clearing its game state.
+            // The user can still close it via the button or by closing the main window.
         }
 
         private void MinimapScaleSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
