@@ -85,7 +85,7 @@ namespace JungleTracker
             string activePlayerChampionName = "";
             string enemyTeam = "";
             
-            // 2. Find active player's team and deter`e enemy team
+            // 2. Find active player's team and determine enemy team
             var allPlayers = root.GetProperty("allPlayers");
             foreach (var player in allPlayers.EnumerateArray())
             {
@@ -105,34 +105,26 @@ namespace JungleTracker
             {
                 string team = player.GetProperty("team").GetString();
                 
-                // Only look at enemy team
                 if (team != enemyTeam) continue;
                 
-                // Check for Smite in summoner spells
                 var summonerSpells = player.GetProperty("summonerSpells");
                 var spell1 = summonerSpells.GetProperty("summonerSpellOne").GetProperty("displayName").GetString();
                 var spell2 = summonerSpells.GetProperty("summonerSpellTwo").GetProperty("displayName").GetString();
                 
-                // Needs to be Contains because Smite can be upgraded now to "Primal/Unleashed Smite" 
                 if (spell1.Contains("Smite") || spell2.Contains("Smite"))
                 {
-                    EnemyJunglerChampionName = player.GetProperty("championName").GetString();
-                    
-                    // Special case for Wukong/MonkeyKing - normalize to "MonkeyKing" for consistency
-                    // since that's how the image files are stored
-                    if (EnemyJunglerChampionName == "Wukong")
-                    {
-                        EnemyJunglerChampionName = "MonkeyKing";
-                        Console.WriteLine("Normalized Wukong to MonkeyKing to match filename");
-                    }
-                    
-                    Console.WriteLine($"Found enemy jungler: {EnemyJunglerChampionName} on {enemyTeam} side");
+                    string originalName = player.GetProperty("championName").GetString();
+
+                    // Use the helper method for normalization
+                    EnemyJunglerChampionName = ChampionNameHelper.Normalize(originalName);
+
+                    Debug.WriteLine($"Found enemy jungler: {originalName} (Normalized: {EnemyJunglerChampionName}) on {enemyTeam} side");
                     return true;
                 }
             }
             
             // No enemy jungler found with Smite
-            Console.WriteLine("No enemy jungler with Smite found");
+            Debug.WriteLine("No enemy jungler with Smite found");
             return false;
         }
     }

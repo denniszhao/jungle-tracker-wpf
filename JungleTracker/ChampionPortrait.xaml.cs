@@ -59,10 +59,7 @@ namespace JungleTracker
 
             try
             {
-                string championFileName = ChampionName;
-                // Handle Wukong naming inconsistency if necessary
-                if (championFileName == "Wukong") championFileName = "MonkeyKing";
-                if (championFileName == "Kha'Zix") championFileName = "Khazix";
+                string championFileName = ChampionNameHelper.Normalize(ChampionName);
 
                 string resourceFolder = Team.Equals("CHAOS", StringComparison.OrdinalIgnoreCase) ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
@@ -81,7 +78,7 @@ namespace JungleTracker
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ChampionPortrait] Error loading champion portrait image: {ex.Message}");
+                Debug.WriteLine($"[ChampionPortrait] Error loading champion portrait image for {ChampionName}: {ex.Message}");
                 PortraitImage.Source = null;
             }
         }

@@ -68,11 +68,10 @@ namespace JungleTracker
 
             try
             {
-                // Special casing for champion names
-                string championFileName = championName;
-                if (championFileName == "Wukong") championFileName = "MonkeyKing";
-                else if (championFileName == "Kha'Zix") championFileName = "Khazix";
-                // Add others if needed
+                // --- Use the helper method for normalization ---
+                string championFileName = ChampionNameHelper.Normalize(championName);
+                // --- Removed old if checks ---
+                // if (championFileName == "Wukong") ...
 
                 string resourceFolder = team.Equals("CHAOS", StringComparison.OrdinalIgnoreCase) ? "champions_altered_red" : "champions_altered_blue";
                 string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
@@ -150,7 +149,7 @@ namespace JungleTracker
                 success = true;
                 // ---
 
-                Debug.WriteLine($"[Scanner] NEW Champion template set: {championName} ({team}). Template Valid: {!_championTemplate?.IsDisposed ?? false}. Mask Valid: {!_championTemplateMask?.IsDisposed ?? true}"); // Updated log
+                Debug.WriteLine($"[Scanner] NEW Champion template set for {championName} (Normalized: {championFileName}, Team: {team}). Template Valid: {!_championTemplate?.IsDisposed ?? false}. Mask Valid: {!_championTemplateMask?.IsDisposed ?? true}");
                 return true;
             }
             catch (Exception ex)
@@ -457,12 +456,13 @@ namespace JungleTracker
                 return "No template loaded";
 
             string resourceFolder = _currentTeam == "CHAOS" ? "champions_altered_red" : "champions_altered_blue";
-            string championFileName = _currentChampionName == "Wukong" ? "MonkeyKing" : _currentChampionName;
+            // Normalize here too for building the path correctly
+            string championFileName = ChampionNameHelper.Normalize(_currentChampionName);
             string resourceName = $"JungleTracker.Assets.Champions.{resourceFolder}.{championFileName}.png";
-            string size = _championTemplate != null ? $"{_championTemplate.Width}x{_championTemplate.Height}" : "N/A";
-            string maskStatus = (_championTemplateMask != null && !_championTemplateMask.IsDisposed && !_championTemplateMask.Empty()) ? "Yes" : "No";
+            string size = (_championTemplate != null && !_championTemplate.IsDisposed) ? $"{_championTemplate.Width}x{_championTemplate.Height}" : "N/A"; // Added IsDisposed check
+            string maskStatus = (_championTemplateMask != null && !_championTemplateMask.IsDisposed && !_championTemplateMask.Empty()) ? "Yes" : "No"; // Added IsDisposed check
 
-            return $"Template: {resourceName}, Size: {size}, Mask Present: {maskStatus}";
+            return $"Template: {resourceName} (From: {_currentChampionName}), Size: {size}, Mask Present: {maskStatus}";
         }
 
         public System.Drawing.Size GetTemplateSize()
