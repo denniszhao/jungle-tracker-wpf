@@ -11,13 +11,41 @@
         ClipToBounds="False">
 
     <Border x:Name="MainBorder" Background="Transparent" ClipToBounds="False">
+        <!-- Use a Grid as the single child of Border to hold multiple elements -->
+        <Grid>
+            <!-- Canvas to hold and transform pre-defined zone polygons (drawn first) -->
+            <Canvas x:Name="ZoneHighlightCanvas"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top">
+                <Canvas.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="ZoneScaleTransform" ScaleX="1" ScaleY="1" />
+                        <TranslateTransform x:Name="ZoneTranslateTransform" X="0" Y="0" />
+                    </TransformGroup>
+                </Canvas.RenderTransform>
 
-        <local:ChampionPortrait x:Name="ChampionPortraitControl"
-                                Width="46" Height="46"
-                                HorizontalAlignment="Left"
-                                VerticalAlignment="Top"
-                                Margin="5"
-                                ClipToBounds="False" />
+                <!-- Define all zone polygons here (based on 510x510) -->
+                <Polygon x:Name="TopZonePolygon" Points="0,0 165,0 165,107 100,147 116,175 0,175" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="RedTopJgZonePolygon" Points="165,0 322,0 322,95 360,154 317,197 294,185 266,200 248,185 230,200 165,107" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="RedBaseZonePolygon" Points="322,0 510,0 510,183 406,183 360,154 322,95" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="RedBotJgZonePolygon" Points="510,183 510,340 407,340 316,263 338,213 317,197 360,154 406,183" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="BotZonePolygon" Points="510,340 510,510 354,510 354,385 400,385 418,360 407,340" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="BlueBotJgZonePolygon" Points="354,510 180,510 180,415 135,368 197,310 218,328 246,312 265,326 278,315 314,348 325,380 354,385" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="BlueBaseZonePolygon" Points="180,510 0,510 0,327 96,327 180,415" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="BlueTopJgZonePolygon" Points="0,327 0,175 116,175 198,244 175,290 197,310 135,368 96,327" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="TopRiverZonePolygon" Points="165,107 230,200 210,218 198,244 116,175 100,147" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="MidZonePolygon" Points="294,185 317,197 338,213 316,263 302,295 278,315 265,326 246,312 218,328 197,310 175,290 198,244 210,218 230,200 248,185 266,200" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                <Polygon x:Name="BotRiverZonePolygon" Points="316,263 407,340 418,360 400,385 354,385 325,380 314,348 278,315 302,295" Fill="#55FF0000" Stroke="Red" StrokeThickness="1" Visibility="Collapsed" />
+                
+            </Canvas>
 
+            <!-- Champion Portrait (drawn on top) -->
+            <local:ChampionPortrait x:Name="ChampionPortraitControl"
+                                    Width="46" Height="46"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Top"
+                                    Margin="5"
+                                    ClipToBounds="False" />
+        </Grid>
     </Border>
 </Window>

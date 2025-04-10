@@ -12,6 +12,9 @@ using System.Threading.Tasks; // Needed for Task.Run
 using System.Windows.Media.Imaging;
 using System.Windows.Media; // Add for Colors
 using System.Windows.Media.Animation; // Add for animations
+using System.Collections.Generic; // Needed for Dictionary
+using System.Linq; // Needed for LINQ operations in point-in-polygon
+using System.Windows.Shapes; // Needed for Polygon class
 
 namespace JungleTracker
 {
@@ -32,16 +35,19 @@ namespace JungleTracker
         // --- Core constants ---
         private const double MIN_MINIMAP_SIZE = 280.0;
         private const double MAX_MINIMAP_SIZE = 560.0;
+        private const double MIN_CAPTURE_SIZE = 254.0;
+        private const double MAX_CAPTURE_SIZE = 510.0;
         private const int SCREENSHOT_INTERVAL = 1000;
         
         // --- New animation constants ---
         private const int FADE_DURATION_MS = 10000;
-        private const double FINAL_FADE_OPACITY = 0.3; // Or 0.2 for semi-transparent
+        private const double FINAL_FADE_OPACITY = 0.3; 
         
         // --- Instance variables ---
         private Timer _screenshotTimer;
         private string _screenshotFolder;
         private double _overlaySize;
+        private double _captureSize;
         private uint _leagueProcessId; // Still useful for focus check
 
         // Add a field to store the window handle we're capturing
@@ -100,7 +106,14 @@ namespace JungleTracker
 
         // Add latest screenshot field
         private Bitmap? _latestMinimapScreenshot;
-        
+
+        // List to hold references to the XAML zone polygons
+        private List<Polygon> _allZonePolygons;
+
+        // --- Brushes for Zone Highlighting ---
+        private static readonly System.Windows.Media.Brush _defaultZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, 255, 0, 0)); // #55FF0000
+        private static readonly System.Windows.Media.Brush _highlightZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, 255, 255, 0)); // #55FFFF00
+
         public OverlayWindow()
         {
             // These MUST be set before InitializeComponent() is called
@@ -111,11 +124,27 @@ namespace JungleTracker
             
             InitializeComponent();
             
+            // Populate the list of zone polygons AFTER InitializeComponent
+            _allZonePolygons = new List<Polygon>
+            {
+                TopZonePolygon, RedTopJgZonePolygon, RedBaseZonePolygon, RedBotJgZonePolygon,
+                BotZonePolygon, BlueBotJgZonePolygon, BlueBaseZonePolygon, BlueTopJgZonePolygon,
+                TopRiverZonePolygon, MidZonePolygon, BotRiverZonePolygon
+            };
+            
             // Apply debug border if in debug mode
             if (DEBUG_MODE)
             {
                 MainBorder.BorderBrush = System.Windows.Media.Brushes.Red;
                 MainBorder.BorderThickness = new Thickness(3);
+
+                // --- Make all zone polygons visible and semi-transparent for debugging --- 
+                foreach (var polygon in _allZonePolygons)
+                {
+                    polygon.Visibility = Visibility.Visible;
+                    polygon.Fill = _defaultZoneFill; 
+                }
+                Debug.WriteLine("[OverlayWindow DEBUG] Made all zone polygons visible in Constructor.");
             }
             
             // Add a source initialize handler to make sure window style is set after window handle is created
@@ -212,41 +241,47 @@ namespace JungleTracker
 
                     if (_isPortraitFadingOut)
                     {
-                        StopFadeOutAnimation(); // Stop fade-out (StopWarningAnimation call inside is removed below)
+                        StopFadeOutAnimation(); // Stop fade-out
                     }
 
                     ChampionPortraitControl.Visibility = Visibility.Collapsed;
                     ChampionPortraitControl.Opacity = 0.0;
+                    HideAllZonePolygons(); // Hide zone polygon if champion is found
 
-                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait.");
+                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait and zone.");
                 }
                 else // --- Champion NOT found ---
                 {
                     if (_lastKnownLocation.HasValue)
                     {
-                        UpdateChampionPortraitPosition(_lastKnownLocation.Value);
+                        // --- Show Zone Polygon --- 
+                        UpdateZoneHighlight(_lastKnownLocation.Value);
+
+                        // --- Show Fading Portrait --- 
+                        UpdateChampionPortraitPosition(_lastKnownLocation.Value); 
 
                         if (!_isPortraitFadingOut)
                         {
-                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out."); // Message updated
+                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out and showing zone."); // Message updated
                              ChampionPortraitControl.Visibility = Visibility.Visible;
                              ChampionPortraitControl.Opacity = 1.0;
-                             StartFadeOutAnimation();
+                             StartFadeOutAnimation(); 
                         }
                         else
                         {
-                             Debug.WriteLine("[OverlayWindow] Champion not found, portrait already fading or faded.");
+                             Debug.WriteLine("[OverlayWindow] Champion not found, portrait already fading or faded. Zone updated.");
                         }
                     }
-                    else // --- No last known location ---
-                    {
+                    else // --- No last known location --- 
+                    { 
                         Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
-                        if (_isPortraitFadingOut)
+                        if (_isPortraitFadingOut) 
                         {
-                             StopFadeOutAnimation();
+                             StopFadeOutAnimation(); 
                         }
                         ChampionPortraitControl.Visibility = Visibility.Collapsed;
                         ChampionPortraitControl.Opacity = 0.0;
+                        HideAllZonePolygons(); // Ensure zone is hidden
                     }
                 }
             }
@@ -270,6 +305,16 @@ namespace JungleTracker
         {
             if (ChampionPortraitControl == null) return; // Safety check
 
+            // --- Calculate padding ---
+            // This is the offset between the full overlay size and the captured area size
+            double padding = (_overlaySize > _captureSize && _captureSize > 0) ? (_overlaySize - _captureSize) / 2.0 : 0;
+
+            // --- Adjust match location based on padding ---
+            // Since the scan was done on a smaller, centered image, add the padding
+            // back to the found coordinates to place the portrait relative to the full overlay.
+            double adjustedMatchX = matchLocation.X + padding;
+            double adjustedMatchY = matchLocation.Y + padding;
+
             // --- Use the UserControl's actual dimensions for centering ---
             double controlWidth = ChampionPortraitControl.ActualWidth > 0 ? ChampionPortraitControl.ActualWidth : ChampionPortraitControl.Width;
             double controlHeight = ChampionPortraitControl.ActualHeight > 0 ? ChampionPortraitControl.ActualHeight : ChampionPortraitControl.Height;
@@ -292,8 +337,8 @@ namespace JungleTracker
              }
             // --- End of dimension calculation ---
 
-            double x = matchLocation.X - (controlWidth / 2);
-            double y = matchLocation.Y - (controlHeight / 2);
+            double x = adjustedMatchX - (controlWidth / 2); // Use adjusted coordinates
+            double y = adjustedMatchY - (controlHeight / 2); // Use adjusted coordinates
 
             // Ensure staying within overlay bounds (using control's dimensions)
             x = Math.Max(0, Math.Min(x, _overlaySize - controlWidth));
@@ -301,6 +346,79 @@ namespace JungleTracker
 
             // Update the Margin of the ChampionPortraitControl itself
             ChampionPortraitControl.Margin = new Thickness(x, y, 0, 0);
+        }
+
+        // --- New method to update the zone highlight ---
+        private void UpdateZoneHighlight(System.Drawing.Point lastKnownLocation)
+        {
+            HideAllZonePolygons(); // Start by resetting all fills (and hiding if not debug)
+
+            // Calculate scale factor (relative to the 510 reference size used in XAML)
+            double scaleFactor = _captureSize > 0 ? _captureSize / 510.0 : 1.0;
+            if (scaleFactor <= 0) return; // Avoid division by zero or invalid scale
+
+            // Convert last known location (relative to captured image) to the 510x510 reference coordinate system
+            System.Windows.Point referencePoint = new System.Windows.Point(
+                lastKnownLocation.X / scaleFactor,
+                lastKnownLocation.Y / scaleFactor
+            );
+
+            Polygon? foundPolygon = null;
+            foreach (var polygon in _allZonePolygons)
+            {
+                // Use FillContains on the polygon's geometry for accurate hit testing
+                if (polygon.RenderedGeometry != null && polygon.RenderedGeometry.FillContains(referencePoint))
+                {
+                    foundPolygon = polygon;
+                    break; // Found the zone, stop checking (can remove break to highlight multiple)
+                }
+            }
+
+            if (foundPolygon != null)
+            {
+                // In debug mode, all stay visible but found one turns yellow.
+                // In release mode, only the found one becomes visible (and yellow).
+                foundPolygon.Fill = _highlightZoneFill; // Set highlight color
+
+                if (!DEBUG_MODE)
+                {
+                    foundPolygon.Visibility = Visibility.Visible; // Show the found polygon
+                    Debug.WriteLine($"[OverlayWindow] Point {referencePoint} found in polygon {foundPolygon.Name}. Making it visible with highlight.");
+                }
+                else {
+                     // All are already visible in debug, just log the highlight
+                     Debug.WriteLine($"[OverlayWindow DEBUG] Point {referencePoint} found in polygon {foundPolygon.Name}. Applied highlight fill.");
+                }
+            }
+            else
+            {
+                 // No polygon found, HideAllZonePolygons already reset state.
+                 Debug.WriteLine($"[OverlayWindow] Point {referencePoint} not found in any defined zone polygon points list."); 
+            }
+        }
+
+        // --- Helper to hide all polygons ---
+        private void HideAllZonePolygons()
+        {
+            // Don't do anything if in debug and polygons are meant to be always visible
+            // if (DEBUG_MODE && _allZonePolygons.Count > 0 && _allZonePolygons[0].IsVisible) 
+            // { 
+            //     // This condition checks if the debug visualization was activated.
+            //     // If so, don't hide them again during normal operation in debug mode.
+            //     return;
+            // }
+
+            if (_allZonePolygons == null) return;
+
+            foreach (var polygon in _allZonePolygons)
+            {
+                 polygon.Fill = _defaultZoneFill; // ALWAYS Reset fill to default
+                 if (!DEBUG_MODE) // ONLY collapse if not in debug mode
+                 {
+                    polygon.Visibility = Visibility.Collapsed;
+                 }
+                 // In debug mode, they remain visible but are reset to red fill.
+            }
         }
 
         // Animation methods
@@ -408,22 +526,31 @@ namespace JungleTracker
                     }
 
                     // Calculate minimap coordinates WITHIN the captured window
-                    int minimapX = width - (int)_overlaySize;
-                    int minimapY = height - (int)_overlaySize;
+                    int minimapAreaX = width - (int)_overlaySize;
+                    int minimapAreaY = height - (int)_overlaySize;
+
+                    // Calculate padding to center the capture area within the minimap area
+                    int padding = (_overlaySize > _captureSize && _captureSize > 0) ? (int)((_overlaySize - _captureSize) / 2.0) : 0;
+
+                    // Calculate the top-left corner of the actual area to capture, applying padding
+                    int captureX = minimapAreaX + padding;
+                    int captureY = minimapAreaY + padding;
+                    int captureWidth = (int)_captureSize; // Use the new capture size
+                    int captureHeight = (int)_captureSize; // Use the new capture size
                     
                     // Ensure coordinates are valid for cropping
-                    if (minimapX < 0 || minimapY < 0 || 
-                        minimapX + (int)_overlaySize > width || 
-                        minimapY + (int)_overlaySize > height ||
-                        (int)_overlaySize <= 0)
+                    if (captureX < 0 || captureY < 0 || 
+                        captureX + captureWidth > width || 
+                        captureY + captureHeight > height ||
+                        captureWidth <= 0 || captureHeight <= 0) // Check capture dimensions too
                     {
-                        Debug.WriteLine("Calculated minimap coordinates are out of bounds");
+                        Debug.WriteLine($"Calculated capture coordinates are out of bounds or invalid size. CaptureX:{captureX}, CaptureY:{captureY}, CaptureW:{captureWidth}, CaptureH:{captureHeight}, WindowW:{width}, WindowH:{height}");
                         return; // Don't proceed if crop is invalid
                     }
                     
-                    // Crop the full bitmap to just the minimap area
+                    // Crop the full bitmap to just the desired capture area
                     using (Bitmap minimapImage = bitmap.Clone(
-                        new System.Drawing.Rectangle(minimapX, minimapY, (int)_overlaySize, (int)_overlaySize), 
+                        new System.Drawing.Rectangle(captureX, captureY, captureWidth, captureHeight), // Use calculated capture coords/size
                         bitmap.PixelFormat))
                     {
                         // Save screenshot with timestamp
@@ -449,8 +576,13 @@ namespace JungleTracker
         {
             // Calculate size and initial position
             _overlaySize = MIN_MINIMAP_SIZE + (scale / 100.0) * (MAX_MINIMAP_SIZE - MIN_MINIMAP_SIZE);
-            this.Width = this.Height = _overlaySize;
+            _captureSize = MIN_CAPTURE_SIZE + (scale / 100.0) * (MAX_CAPTURE_SIZE - MIN_CAPTURE_SIZE); // Calculate capture size
+            this.Width = this.Height = _overlaySize; // Overlay window remains the original size
             
+            // --- Update Zone Transforms ---
+            UpdateZoneTransforms();
+            // ---
+
             // Position overlay
             double screenWidth = SystemParameters.PrimaryScreenWidth;
             double screenHeight = SystemParameters.PrimaryScreenHeight;
@@ -608,6 +740,9 @@ namespace JungleTracker
             // 5. Clear the template in the scanner service
             _minimapScanner?.ClearCurrentTemplate();
 
+            // 6. Hide the zone polygon
+            HideAllZonePolygons();
+
              // 6. Optionally stop the timer? Or let it run idly? Stopping might be safer.
              // _screenshotTimer?.Stop();
              // Debug.WriteLine("[OverlayWindow] Screenshot timer stopped due to game close.");
@@ -626,6 +761,7 @@ namespace JungleTracker
             StopFadeOutAnimation();
             ChampionPortraitControl.Opacity = 0.0;
             ChampionPortraitControl.Visibility = Visibility.Collapsed;
+            HideAllZonePolygons(); // Hide zone polygon when info is reset
 
             // If timer was stopped in HandleGameClosed, restart it here
             // if (_screenshotTimer != null && !_screenshotTimer.Enabled)
@@ -633,6 +769,23 @@ namespace JungleTracker
             //     _screenshotTimer.Start();
             //     Debug.WriteLine("[OverlayWindow] Screenshot timer restarted by SetEnemyJunglerInfo.");
             // }
+        }
+
+        // --- New method to update canvas transforms based on overlay/capture size ---
+        private void UpdateZoneTransforms()
+        {
+            if (_captureSize <= 0 || ZoneScaleTransform == null || ZoneTranslateTransform == null) return;
+
+            // Scale factor relative to the 510x510 reference size the polygons were defined with
+            double scaleFactor = _captureSize / 510.0;
+            double padding = (_overlaySize - _captureSize) / 2.0;
+
+            ZoneScaleTransform.ScaleX = scaleFactor;
+            ZoneScaleTransform.ScaleY = scaleFactor;
+            ZoneTranslateTransform.X = padding;
+            ZoneTranslateTransform.Y = padding;
+
+            Debug.WriteLine($"[OverlayWindow] Updated Zone Transforms: Scale={scaleFactor:F2}, Padding={padding:F1}");
         }
     }
 }
