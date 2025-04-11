@@ -19,6 +19,9 @@ namespace JungleTracker
         public string ActivePlayerRiotId { get; private set; }
         public string ActivePlayerTeam { get; private set; }
         public string EnemyJunglerChampionName { get; private set; }
+        // New properties to track death status and respawn timer
+        public bool EnemyJunglerIsDead { get; private set; }
+        public double EnemyJunglerRespawnTimer { get; private set; }
 
         public LeagueClientService()
         {
@@ -28,6 +31,10 @@ namespace JungleTracker
                 ServerCertificateCustomValidationCallback = (request, cert, chain, errors) => true
             };
             _httpClient = new HttpClient(handler);
+            
+            // Initialize default values
+            EnemyJunglerIsDead = false;
+            EnemyJunglerRespawnTimer = 0.0;
         }
 
         public async Task<bool> TryGetGameDataAsync(int maxRetries = 10, int retryDelayMs = 5000)
@@ -101,6 +108,7 @@ namespace JungleTracker
             }
             
             // 3. Find enemy jungler (player on enemy team with Smite)
+            bool enemyJunglerFound = false;
             foreach (var player in allPlayers.EnumerateArray())
             {
                 string team = player.GetProperty("team").GetString();
@@ -117,15 +125,29 @@ namespace JungleTracker
 
                     // Use the helper method for normalization
                     EnemyJunglerChampionName = ChampionNameHelper.Normalize(originalName);
+                    
+                    // Get death status and respawn timer
+                    EnemyJunglerIsDead = player.GetProperty("isDead").GetBoolean();
+                    EnemyJunglerRespawnTimer = EnemyJunglerIsDead ? player.GetProperty("respawnTimer").GetDouble() : 0.0;
 
                     Debug.WriteLine($"Found enemy jungler: {originalName} (Normalized: {EnemyJunglerChampionName}) on {enemyTeam} side");
-                    return true;
+                    Debug.WriteLine($"Enemy jungler is {(EnemyJunglerIsDead ? "dead" : "alive")}{(EnemyJunglerIsDead ? $", respawning in {EnemyJunglerRespawnTimer:F1} seconds" : "")}");
+                    
+                    enemyJunglerFound = true;
+                    break;
                 }
             }
             
-            // No enemy jungler found with Smite
-            Debug.WriteLine("No enemy jungler with Smite found");
-            return false;
+            // If no enemy jungler found with Smite, reset death status properties
+            if (!enemyJunglerFound)
+            {
+                EnemyJunglerIsDead = false;
+                EnemyJunglerRespawnTimer = 0.0;
+                Debug.WriteLine("No enemy jungler with Smite found");
+                return false;
+            }
+            
+            return true;
         }
     }
 }

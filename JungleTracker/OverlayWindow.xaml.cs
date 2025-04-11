@@ -49,6 +49,7 @@ namespace JungleTracker
         private MinimapCaptureService _minimapCaptureService; 
         private PortraitManager _enemyJunglerPortraitManager; 
         private ZoneManager _zoneManager; // Add ZoneManager field
+        private GameStateService _gameStateService; // Add GameStateService field
 
         // List to hold references to the XAML zone polygons
         private List<Polygon> _allZonePolygons;
@@ -62,7 +63,7 @@ namespace JungleTracker
         /// Sets up window properties, initializes components, populates zone polygons,
         /// applies debug visuals if enabled, and initializes services.
         /// </summary>
-        public OverlayWindow()
+        public OverlayWindow(GameStateService gameStateService)
         {
             // These MUST be set before InitializeComponent() is called
             this.AllowsTransparency = true;
@@ -71,6 +72,9 @@ namespace JungleTracker
             this.ResizeMode = ResizeMode.NoResize;
             
             InitializeComponent();
+            
+            // Store the GameStateService reference
+            _gameStateService = gameStateService ?? throw new ArgumentNullException(nameof(gameStateService));
             
             // --- Initialize Managers and Services ---
             _enemyJunglerPortraitManager = new PortraitManager(ChampionPortraitControl); // Use renamed field
@@ -103,9 +107,9 @@ namespace JungleTracker
             // Add a source initialize handler to make sure window style is set after window handle is created
             this.SourceInitialized += OverlayWindow_SourceInitialized;
             
+            // Initialize scanner and capture services
             _minimapScanner = new MinimapScannerService();
-            _minimapCaptureService = new MinimapCaptureService(DEFAULT_SCREENSHOT_INTERVAL); // No process name needed
-            _minimapCaptureService.MinimapImageCaptured += OnMinimapImageCaptured; // Subscribe to event
+            _minimapCaptureService = new MinimapCaptureService(); 
 
             this.Closed += OnOverlayClosed; // Use named method for cleanup
         }
@@ -122,117 +126,74 @@ namespace JungleTracker
         }
         
         /// <summary>
-        /// Event handler called when the MinimapCaptureService captures a new minimap image (or fails to).
-        /// Ensures execution on the UI thread and passes the bitmap to ProcessMinimapScreenshot.
+        /// Handles game state updates from the GameStateService.
+        /// Updates UI elements based on the enemy jungler's state.
         /// </summary>
-        /// <param name="capturedBitmap">The captured minimap Bitmap, or null if capture failed or was skipped.</param>
-        private void OnMinimapImageCaptured(Bitmap? capturedBitmap)
+        /// <param name="state">The current game state.</param>
+        private void OnGameStateUpdated(GameStateEventArgs state)
         {
-             // Ensure execution on the UI thread
+            // Ensure execution on the UI thread
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(() => OnMinimapImageCaptured(capturedBitmap));
+                Dispatcher.Invoke(() => OnGameStateUpdated(state));
                 return;
             }
 
-            if (capturedBitmap != null)
+            // Update champion info if needed
+            if (ChampionPortraitControl != null && 
+                (!string.Equals(ChampionPortraitControl.ChampionName, state.EnemyJunglerChampionName) ||
+                 !string.Equals(ChampionPortraitControl.Team, state.EnemyJunglerTeam)))
             {
-                 // Debug.WriteLine("[OverlayWindow] Received minimap image from service.");
-                 // Process the valid screenshot
-                 if (_minimapScanner != null &&
-                     ChampionPortraitControl != null &&
-                     !string.IsNullOrEmpty(ChampionPortraitControl.ChampionName))
-                 {
-                     ProcessMinimapScreenshot(capturedBitmap);
-                 }
-                 else
-                 {
-                      // If scanner or control invalid, make sure to dispose the bitmap
-                      capturedBitmap.Dispose();
-                 }
-            }
-            else
-            {
-                 // Debug.WriteLine("[OverlayWindow] Received null bitmap (capture skipped or failed).");
-                 // Handle the case where capture failed or game wasn't focused
-                 // Maybe ensure portrait/zone are hidden if they weren't already?
-                 // If the game loses focus mid-fade, the fade continues but won't restart
-                 // until focus returns and the champion is still missing.
-                 // If the game loses focus when portrait is shown, it stays shown until next valid scan.
-                 // This seems acceptable for now. We could add logic here to hide things
-                 // if the game loses focus, but let's keep it simple first.
-            }
-        }
-
-        /// <summary>
-        /// Processes a captured minimap screenshot to find the enemy jungler.
-        /// Updates the UI (hides portrait if found, shows fading portrait and zone highlight if not found).
-        /// </summary>
-        /// <param name="minimapBitmap">The minimap Bitmap to process. This method takes ownership and disposes the bitmap.</param>
-        private void ProcessMinimapScreenshot(Bitmap minimapBitmap)
-        {
-            if (ChampionPortraitControl == null)
-            {
-                minimapBitmap.Dispose(); // Dispose bitmap if control is null
-                return;
+                ChampionPortraitControl.ChampionName = state.EnemyJunglerChampionName;
+                ChampionPortraitControl.Team = state.EnemyJunglerTeam;
             }
 
-            try
+            // UI Logic based on jungler state:
+            if (state.IsEnemyJunglerDead)
             {
-                // Ensure the template is set based on the control's properties
-                if (!_minimapScanner.SetChampionTemplate(ChampionPortraitControl.ChampionName, ChampionPortraitControl.Team))
+                // When jungler is dead, show portrait at base and hide zone
+                _zoneManager.HideAll();
+                _enemyJunglerPortraitManager.ShowAtBase(state.EnemyJunglerTeam, _overlaySize);
+                Debug.WriteLine($"[OverlayWindow] Enemy jungler is dead. Showing at base with respawn timer: {state.EnemyJunglerRespawnTimer:F1}s");
+            }
+            else // Jungler is alive
+            {
+                if (state.IsEnemyJunglerVisibleOnMinimap)
                 {
-                    Debug.WriteLine($"[OverlayWindow] Failed to set champion template for {ChampionPortraitControl.ChampionName}");
-                    return; // Don't dispose bitmap here, Scanner might hold it? No, scanner uses its own.
-                }
-
-                System.Drawing.Point? matchLocation = _minimapScanner.ScanForChampion(minimapBitmap);
-
-                if (matchLocation.HasValue)
-                {
-                    _lastKnownLocation = matchLocation;
-                    _enemyJunglerPortraitManager.Hide(); 
+                    // When jungler is visible, hide portrait and zone
+                    _enemyJunglerPortraitManager.Hide();
                     _zoneManager.HideAll();
-
-                    Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait and zone.");
+                    Debug.WriteLine("[OverlayWindow] Enemy jungler is visible on minimap. Hiding portrait and zone.");
                 }
-                else 
+                else // Jungler is alive but not visible
                 {
-                    if (_lastKnownLocation.HasValue)
+                    if (state.EnemyJunglerLastSeenLocation.HasValue)
                     {
-                        _zoneManager.UpdateHighlight(_lastKnownLocation.Value, _captureSize);
-                        _enemyJunglerPortraitManager.UpdatePosition(_lastKnownLocation.Value, _overlaySize, _captureSize);
+                        // When jungler was last seen somewhere, update zone and portrait
+                        _zoneManager.UpdateHighlight(state.EnemyJunglerLastSeenLocation.Value, _captureSize);
+                        _enemyJunglerPortraitManager.UpdatePosition(state.EnemyJunglerLastSeenLocation.Value, _overlaySize, _captureSize);
 
-                        // Only start the fade-out if the portrait is not already fading
-                        if (!_enemyJunglerPortraitManager.IsFadingOut) 
+                        // Only start fade-out if not already fading
+                        if (!_enemyJunglerPortraitManager.IsFadingOut)
                         {
-                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out and showing zone.");
-                             _enemyJunglerPortraitManager.StartFadeOut(); 
+                            Debug.WriteLine("[OverlayWindow] Enemy jungler not visible. Starting fade-out and showing zone.");
+                            _enemyJunglerPortraitManager.StartFadeOut();
                         }
                     }
-                    else // --- No last known location --- 
-                    { 
-                        Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
-                        _enemyJunglerPortraitManager.Hide(); 
+                    else // No last known location
+                    {
+                        Debug.WriteLine("[OverlayWindow] Enemy jungler not visible, and no last known location.");
+                        _enemyJunglerPortraitManager.Hide();
                         _zoneManager.HideAll();
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[OverlayWindow] Error processing minimap screenshot: {ex.Message}");
-                 _enemyJunglerPortraitManager?.Hide(); 
-            }
-            finally
-            {
-                // --- IMPORTANT: Dispose the bitmap received from the service ---
-                minimapBitmap?.Dispose();
             }
         }
 
         /// <summary>
         /// Shows the overlay window, calculates its size and position based on settings,
-        /// updates zone transforms, starts the capture service, and makes the window visible.
+        /// updates zone transforms, registers services with GameStateService, 
+        /// starts continuous updates, and makes the window visible.
         /// </summary>
         /// <param name="location">The corner of the screen where the overlay should be placed ("Top Left", "Top Right", etc.).</param>
         /// <param name="scale">The scale percentage (0-100) used to determine the overlay size.</param>
@@ -271,31 +232,29 @@ namespace JungleTracker
                     break;
             }
             
-            // --- Configure and Start Capture Service ---
-            if (_minimapCaptureService != null)
+            // --- Register and Initialize Game State Service ---
+            try
             {
-                try
-                {
-                    Debug.WriteLine($"[OverlayWindow] Configuring capture service: Overlay={_overlaySize}, Capture={_captureSize}");
-                    _minimapCaptureService.UpdateCaptureParameters(_overlaySize, _captureSize);
-                    
-                    Debug.WriteLine("[OverlayWindow] Attempting to start capture service...");
-                    if (!_minimapCaptureService.Start())
-                    {
-                         // Start() already shows a MessageBox on failure
-                         Debug.WriteLine("[OverlayWindow] Capture service failed to start. Closing overlay.");
-                         this.Close(); // Close overlay if service cannot start
-                         return;
-                    }
-                    Debug.WriteLine("[OverlayWindow] Capture service started successfully.");
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[OverlayWindow] Error starting capture service: {ex.Message}");
-                    System.Windows.MessageBox.Show($"Error initializing capture: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                    this.Close();
-                    return;
-                }
+                Debug.WriteLine("[OverlayWindow] Registering minimap services with GameStateService");
+                _gameStateService.RegisterMinimapServices(_minimapCaptureService, _minimapScanner);
+                _gameStateService.UpdateOverlayParameters(_overlaySize, _captureSize);
+                
+                // Subscribe to game state updates
+                _gameStateService.GameStateUpdated += OnGameStateUpdated;
+                
+                // Start continuous updates
+                Debug.WriteLine("[OverlayWindow] Starting continuous game state updates");
+                _gameStateService.StartContinuousUpdates(
+                    TimeSpan.FromMilliseconds(DEFAULT_SCREENSHOT_INTERVAL),
+                    _overlaySize,
+                    _captureSize);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[OverlayWindow] Error initializing game state service: {ex.Message}");
+                System.Windows.MessageBox.Show($"Error initializing game state service: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                this.Close();
+                return;
             }
             
             // Show and activate the overlay window
@@ -306,10 +265,6 @@ namespace JungleTracker
 
             _zoneManager.HideAll();
             _enemyJunglerPortraitManager.Reset(); 
-            _zoneManager.HideAll();
-
-            // Capture service will resume automatically when game is focused again.
-            // No explicit timer start needed here.
         }
 
         /// <summary>
@@ -325,10 +280,16 @@ namespace JungleTracker
         /// </summary>
         private void CleanupCaptureResources()
         {
-             Debug.WriteLine("[OverlayWindow] Cleaning up resources...");
+            Debug.WriteLine("[OverlayWindow] Cleaning up resources...");
+            
+            // Stop game state updates and unsubscribe from events
+            if (_gameStateService != null)
+            {
+                _gameStateService.StopContinuousUpdates();
+                _gameStateService.GameStateUpdated -= OnGameStateUpdated;
+            }
             
             // Dispose of the minimap capture service
-            _minimapCaptureService?.Stop(); // Ensure it's stopped first
             _minimapCaptureService?.Dispose();
             _minimapCaptureService = null;
             
@@ -354,31 +315,26 @@ namespace JungleTracker
 
             Debug.WriteLine("[OverlayWindow] Handling game closed event.");
 
-            // 1. Stop any ongoing fade-out animation and reset its state flag
+            // Stop continuous updates
+            _gameStateService.StopContinuousUpdates();
+
+            // Reset UI state
             _enemyJunglerPortraitManager?.Reset(); 
 
-            // 2. Hide the portrait control immediately (handled by Reset)
+            // Clear champion info
             if (ChampionPortraitControl != null)
             {
-                // 3. Optionally clear the champion info (triggers image source nulling)
-                 ChampionPortraitControl.ChampionName = string.Empty;
-                 ChampionPortraitControl.Team = string.Empty;
+                ChampionPortraitControl.ChampionName = string.Empty;
+                ChampionPortraitControl.Team = string.Empty;
             }
 
-            // 4. Reset the last known location
-            _lastKnownLocation = null;
-
-            // 5. Clear the template in the scanner service
+            // Reset state
             _minimapScanner?.ClearCurrentTemplate();
             _zoneManager.HideAll();
-
-             // 7. Capture service will stop automatically when game loses focus/closes.
-             // No explicit stop call needed here anymore.
         }
 
         /// <summary>
         /// Sets the information for the enemy jungler to be tracked.
-        /// Resets the UI state (hides portrait, stops animation, clears last location).
         /// </summary>
         /// <param name="championName">The name of the enemy jungler champion.</param>
         /// <param name="team">The team identifier for the enemy jungler (e.g., "Blue" or "Red").</param>
@@ -390,12 +346,8 @@ namespace JungleTracker
             ChampionPortraitControl.ChampionName = championName;
             ChampionPortraitControl.Team = team;
 
-            _lastKnownLocation = null;
             _enemyJunglerPortraitManager.Reset(); 
             _zoneManager.HideAll(); 
-
-            // Capture service will resume automatically when game is focused again.
-            // No explicit timer start needed here.
         }
     }
 }

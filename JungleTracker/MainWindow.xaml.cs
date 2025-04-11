@@ -20,6 +20,7 @@ namespace JungleTracker
     {
         private OverlayWindow? _overlayWindow = null;
         private LeagueClientService _leagueClientService;
+        private GameStateService _gameStateService;
         private Timer? _leagueMonitorTimer = null;
         private bool _wasLeagueRunning = false;
 
@@ -31,6 +32,8 @@ namespace JungleTracker
             
             // Initialize the League Client Service
             _leagueClientService = new LeagueClientService();
+            // Initialize the Game State Service
+            _gameStateService = new GameStateService(_leagueClientService);
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -95,19 +98,19 @@ namespace JungleTracker
             // Wait a bit for the game to initialize
             await Task.Delay(5000);
             
-            // Try to get game data (will retry several times)
-            bool gameDataFound = await _leagueClientService.TryGetGameDataAsync();
+            // Try to get game data through GameStateService
+            bool gameDataFound = await _gameStateService.InitializeEnemyJunglerDataAsync();
             
             if (gameDataFound)
             {
-                Debug.WriteLine($"Enemy jungler detected: {_leagueClientService.EnemyJunglerChampionName}");
+                Debug.WriteLine($"Enemy jungler detected: {_gameStateService.EnemyJunglerChampionName}");
                 
                 // If overlay is already open, update it
                 if (_overlayWindow != null)
                 {
                     _overlayWindow.SetEnemyJunglerInfo(
-                        _leagueClientService.EnemyJunglerChampionName, 
-                        _leagueClientService.ActivePlayerTeam == "ORDER" ? "CHAOS" : "ORDER");
+                        _gameStateService.EnemyJunglerChampionName, 
+                        _gameStateService.EnemyJunglerTeam);
                 }
             }
             else
@@ -152,22 +155,22 @@ namespace JungleTracker
                     return;
                 }
 
-                // Create overlay window
-                _overlayWindow = new OverlayWindow();
+                // Create overlay window with reference to GameStateService
+                _overlayWindow = new OverlayWindow(_gameStateService);
                 _overlayWindow.Closed += OverlayWindow_Closed;
 
                 // Try to get enemy jungler info if game is running
                 if (IsLeagueGameRunning())
                 {
                     Debug.WriteLine("Getting enemy jungler info after overlay click");
-                    bool gameDataFound = await _leagueClientService.TryGetGameDataAsync();
+                    bool gameDataFound = await _gameStateService.InitializeEnemyJunglerDataAsync();
                     if (gameDataFound)
                     {
-                        Debug.WriteLine($"Enemy jungler detected, passing to Overlay: {_leagueClientService.EnemyJunglerChampionName}");
+                        Debug.WriteLine($"Enemy jungler detected, passing to Overlay: {_gameStateService.EnemyJunglerChampionName}");
                         // Pass both champion name and team
                         _overlayWindow.SetEnemyJunglerInfo(
-                            _leagueClientService.EnemyJunglerChampionName,
-                            _leagueClientService.ActivePlayerTeam == "ORDER" ? "CHAOS" : "ORDER");
+                            _gameStateService.EnemyJunglerChampionName,
+                            _gameStateService.EnemyJunglerTeam);
                     }
                 }
 
@@ -208,6 +211,7 @@ namespace JungleTracker
             _overlayWindow?.Close();
             _leagueMonitorTimer?.Stop();
             _leagueMonitorTimer?.Dispose();
+            _gameStateService?.Dispose();
         }
     }
 } 

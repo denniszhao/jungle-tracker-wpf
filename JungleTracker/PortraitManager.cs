@@ -85,6 +85,72 @@ namespace JungleTracker
         }
 
         /// <summary>
+        /// Shows the portrait in the corresponding enemy team's base location.
+        /// </summary>
+        /// <param name="enemyTeam">The team of the enemy jungler ("CHAOS" for red side, "ORDER" for blue side).</param>
+        /// <param name="overlaySize">The size of the overlay window.</param>
+        public void ShowAtBase(string enemyTeam, double overlaySize)
+        {
+            if (_portraitControl == null) return;
+
+            // Stop any existing fade animation
+            StopFade();
+
+            // Get the size of the portrait
+            double controlWidth = _portraitControl.ActualWidth > 0 ? _portraitControl.ActualWidth : _portraitControl.Width;
+            double controlHeight = _portraitControl.ActualHeight > 0 ? _portraitControl.ActualHeight : _portraitControl.Height;
+
+            // Fallback logic for dimensions (same as in UpdatePosition)
+            if (controlWidth <= 0 || controlHeight <= 0)
+            {
+                if (_portraitControl.RenderSize.Width > 0 && _portraitControl.RenderSize.Height > 0)
+                {
+                    controlWidth = _portraitControl.RenderSize.Width;
+                    controlHeight = _portraitControl.RenderSize.Height;
+                }
+                else
+                {
+                    controlWidth = _portraitControl.Width;
+                    controlHeight = _portraitControl.Height;
+                    if (controlWidth <= 0 || controlHeight <= 0)
+                    {
+                        Debug.WriteLine($"[PortraitManager] Error: ChampionPortraitControl Width/Height are invalid ({controlWidth}x{controlHeight}). Cannot position in base.");
+                        return;
+                    }
+                }
+            }
+            
+            // Calculate position based on team
+            double padding = 10; // Add a small padding from the edge
+            double x, y;
+            
+            if (enemyTeam.Equals("CHAOS", StringComparison.OrdinalIgnoreCase))
+            {
+                // Red team (CHAOS) is top-right
+                x = overlaySize - controlWidth - padding;
+                y = padding; // Changed from bottom-right to top-right
+            }
+            else
+            {
+                // Blue team (ORDER) is bottom-left
+                x = padding;
+                y = overlaySize - controlHeight - padding; // Changed from top-left to bottom-left
+            }
+            
+            // Set position
+            _portraitControl.Margin = new Thickness(x, y, 0, 0);
+            
+            // Show portrait at full opacity
+            _portraitControl.Opacity = 1.0;
+            _portraitControl.Visibility = Visibility.Visible;
+            
+            // Reset animation state
+            _isPortraitFadingOut = false;
+            
+            Debug.WriteLine($"[PortraitManager] Portrait shown at {enemyTeam} base position ({x}, {y})");
+        }
+
+        /// <summary>
         /// Makes the portrait visible at full opacity and starts the fade-out animation.
         /// If already fading, this method does nothing.
         /// </summary>
