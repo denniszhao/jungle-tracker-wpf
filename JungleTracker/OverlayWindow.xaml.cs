@@ -2,11 +2,9 @@
 using System.IO;
 using System.Windows;
 // Remove System.Windows.Shapes which is causing Rectangle conflict
-using Timer = System.Timers.Timer;
 using System.Timers;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading.Tasks; // Needed for Task.Run
 using System.Windows.Media.Imaging;
@@ -28,73 +26,20 @@ namespace JungleTracker
         private const bool DEBUG_MODE = false;
 #endif
 
-        // Win32 API imports
-        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-        
         // --- Core constants ---
         private const double MIN_MINIMAP_SIZE = 280.0;
         private const double MAX_MINIMAP_SIZE = 560.0;
         private const double MIN_CAPTURE_SIZE = 254.0;
         private const double MAX_CAPTURE_SIZE = 510.0;
-        private const int SCREENSHOT_INTERVAL = 1000;
+        private const int DEFAULT_SCREENSHOT_INTERVAL = 1000; // Renamed
         
         // --- New animation constants ---
         private const int FADE_DURATION_MS = 10000;
         private const double FINAL_FADE_OPACITY = 0.3; 
         
         // --- Instance variables ---
-        private Timer _screenshotTimer;
-        private string _screenshotFolder;
         private double _overlaySize;
         private double _captureSize;
-        private uint _leagueProcessId; // Still useful for focus check
-
-        // Add a field to store the window handle we're capturing
-        private IntPtr _captureHwnd = IntPtr.Zero;
-
-        // Add window rect structure and method for getting window bounds
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int left;
-            public int top;
-            public int right;
-            public int bottom;
-        }
-
-        [DllImport("user32.dll")]
-        private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-
-        // Additional Win32 API imports for BitBlt
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetWindowDC(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hdcSrc, int nXSrc, int nYSrc, int dwRop);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
-
-        // PrintWindow flags
-        private const uint PW_RENDERFULLCONTENT = 0x00000002; // Added in Windows 10
-
-        // New Win32 API imports for SetWindowLong and GetWindowLong
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-        // Window style constants
-        private const int GWL_EXSTYLE = -20;
-        private const int WS_EX_TRANSPARENT = 0x00000020;
-        private const int WS_EX_LAYERED = 0x00080000;
-        private const int WS_EX_TOOLWINDOW = 0x00000080; // Additional style to prevent showing in alt+tab
 
         // Add fields for animation
         private Storyboard? _fadeOutStoryboard;
@@ -103,17 +48,21 @@ namespace JungleTracker
 
         // Add field for the minimap scanner service
         private MinimapScannerService _minimapScanner;
-
-        // Add latest screenshot field
-        private Bitmap? _latestMinimapScreenshot;
+        // --- Add field for the minimap capture service ---
+        private MinimapCaptureService _minimapCaptureService; 
 
         // List to hold references to the XAML zone polygons
         private List<Polygon> _allZonePolygons;
 
         // --- Brushes for Zone Highlighting ---
-        private static readonly System.Windows.Media.Brush _defaultZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, 255, 0, 0)); // #55FF0000
-        private static readonly System.Windows.Media.Brush _highlightZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, 255, 255, 0)); // #55FFFF00
+        private static readonly System.Windows.Media.Brush _defaultZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 255, 0, 0)); // #55FF0000
+        private static readonly System.Windows.Media.Brush _highlightZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 255, 255, 0)); // #55FFFF00
 
+        /// <summary>
+        /// Initializes a new instance of the OverlayWindow class.
+        /// Sets up window properties, initializes components, populates zone polygons,
+        /// applies debug visuals if enabled, and initializes services.
+        /// </summary>
         public OverlayWindow()
         {
             // These MUST be set before InitializeComponent() is called
@@ -150,78 +99,82 @@ namespace JungleTracker
             // Add a source initialize handler to make sure window style is set after window handle is created
             this.SourceInitialized += OverlayWindow_SourceInitialized;
             
-            SetupScreenshotFolder();
-
             // Create the minimap scanner service
             _minimapScanner = new MinimapScannerService();
 
-            // Timer setup - will capture using PrintWindow
-            _screenshotTimer = new Timer(SCREENSHOT_INTERVAL);
-            _screenshotTimer.Elapsed += OnScreenshotTimerElapsed; 
-            _screenshotTimer.AutoReset = true;
+            // --- Create the minimap capture service ---
+            _minimapCaptureService = new MinimapCaptureService(DEFAULT_SCREENSHOT_INTERVAL); // No process name needed
+            _minimapCaptureService.MinimapImageCaptured += OnMinimapImageCaptured; // Subscribe to event
 
             this.Closed += OnOverlayClosed; // Use named method for cleanup
         }
 
+        /// <summary>
+        /// Applies click-through and other necessary extended window styles after the window handle is created.
+        /// </summary>
         private void OverlayWindow_SourceInitialized(object sender, EventArgs e)
         {
             // Make the window click-through by modifying its extended styles
             IntPtr hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            int extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
+            int extendedStyle = Win32Helper.GetWindowLong(hwnd, Win32Helper.GWL_EXSTYLE);
+            Win32Helper.SetWindowLong(hwnd, Win32Helper.GWL_EXSTYLE, extendedStyle | Win32Helper.WS_EX_TRANSPARENT | Win32Helper.WS_EX_LAYERED | Win32Helper.WS_EX_TOOLWINDOW);
         }
         
-        // Setup folder for saving screenshots
-        private void SetupScreenshotFolder()
+        /// <summary>
+        /// Event handler called when the MinimapCaptureService captures a new minimap image (or fails to).
+        /// Ensures execution on the UI thread and passes the bitmap to ProcessMinimapScreenshot.
+        /// </summary>
+        /// <param name="capturedBitmap">The captured minimap Bitmap, or null if capture failed or was skipped.</param>
+        private void OnMinimapImageCaptured(Bitmap? capturedBitmap)
         {
-            string baseFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-            _screenshotFolder = System.IO.Path.Combine(baseFolder, "JungleTracker", "Screenshots", 
-                                            DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
-            Directory.CreateDirectory(_screenshotFolder);
-        }
-
-        // --- Process Management ---
-        private bool IsLeagueOfLegendsFocused()
-        {
-            IntPtr focusedWindow = GetForegroundWindow();
-            if (focusedWindow == IntPtr.Zero) return false;
-
-            GetWindowThreadProcessId(focusedWindow, out uint focusedProcessId);
-
-            if (_leagueProcessId != 0 && focusedProcessId == _leagueProcessId) return true;
-
-            Process[] processes = Process.GetProcessesByName("League of Legends");
-            if (processes.Length == 0)
+             // Ensure execution on the UI thread
+            if (!Dispatcher.CheckAccess())
             {
-                 _leagueProcessId = 0; // Reset if game not found
-                 return false;
+                Dispatcher.Invoke(() => OnMinimapImageCaptured(capturedBitmap));
+                return;
             }
 
-            _leagueProcessId = (uint)processes[0].Id;
-            return focusedProcessId == _leagueProcessId;
+            if (capturedBitmap != null)
+            {
+                 // Debug.WriteLine("[OverlayWindow] Received minimap image from service.");
+                 // Process the valid screenshot
+                 if (_minimapScanner != null &&
+                     ChampionPortraitControl != null &&
+                     !string.IsNullOrEmpty(ChampionPortraitControl.ChampionName))
+                 {
+                     ProcessMinimapScreenshot(capturedBitmap);
+                 }
+                 else
+                 {
+                      // If scanner or control invalid, make sure to dispose the bitmap
+                      capturedBitmap.Dispose();
+                 }
+            }
+            else
+            {
+                 // Debug.WriteLine("[OverlayWindow] Received null bitmap (capture skipped or failed).");
+                 // Handle the case where capture failed or game wasn't focused
+                 // Maybe ensure portrait/zone are hidden if they weren't already?
+                 // If the game loses focus mid-fade, the fade continues but won't restart
+                 // until focus returns and the champion is still missing.
+                 // If the game loses focus when portrait is shown, it stays shown until next valid scan.
+                 // This seems acceptable for now. We could add logic here to hide things
+                 // if the game loses focus, but let's keep it simple first.
+            }
         }
 
-        // Handle screenshot timer elapsed - NEW METHOD
-        private void OnScreenshotTimerElapsed(object? sender, ElapsedEventArgs e)
+        /// <summary>
+        /// Processes a captured minimap screenshot to find the enemy jungler.
+        /// Updates the UI (hides portrait if found, shows fading portrait and zone highlight if not found).
+        /// </summary>
+        /// <param name="minimapBitmap">The minimap Bitmap to process. This method takes ownership and disposes the bitmap.</param>
+        private void ProcessMinimapScreenshot(Bitmap minimapBitmap)
         {
-            Dispatcher.Invoke(() => {
-                AttemptCapture();
-
-                // Access control via x:Name from XAML
-                if (_minimapScanner != null &&
-                    ChampionPortraitControl != null && // Add null check
-                    !string.IsNullOrEmpty(ChampionPortraitControl.ChampionName) &&
-                    _latestMinimapScreenshot != null)
-                {
-                    ProcessMinimapScreenshot();
-                }
-            });
-        }
-
-        // New method to process the minimap screenshot
-        private void ProcessMinimapScreenshot()
-        {
-            if (ChampionPortraitControl == null) return;
+            if (ChampionPortraitControl == null)
+            {
+                minimapBitmap.Dispose(); // Dispose bitmap if control is null
+                return;
+            }
 
             try
             {
@@ -229,10 +182,10 @@ namespace JungleTracker
                 if (!_minimapScanner.SetChampionTemplate(ChampionPortraitControl.ChampionName, ChampionPortraitControl.Team))
                 {
                     Debug.WriteLine($"[OverlayWindow] Failed to set champion template for {ChampionPortraitControl.ChampionName}");
-                    return;
+                    return; // Don't dispose bitmap here, Scanner might hold it? No, scanner uses its own.
                 }
 
-                System.Drawing.Point? matchLocation = _minimapScanner.ScanForChampion(_latestMinimapScreenshot);
+                System.Drawing.Point? matchLocation = _minimapScanner.ScanForChampion(minimapBitmap);
 
                 if (matchLocation.HasValue)
                 {
@@ -254,22 +207,17 @@ namespace JungleTracker
                 {
                     if (_lastKnownLocation.HasValue)
                     {
-                        // --- Show Zone Polygon --- 
+                        // Highlight the correct zone and move the portrait to the last known location
                         UpdateZoneHighlight(_lastKnownLocation.Value);
-
-                        // --- Show Fading Portrait --- 
                         UpdateChampionPortraitPosition(_lastKnownLocation.Value); 
 
+                        // Only start the fade-out if the portrait is not already fading out
                         if (!_isPortraitFadingOut)
                         {
                              Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out and showing zone."); // Message updated
                              ChampionPortraitControl.Visibility = Visibility.Visible;
                              ChampionPortraitControl.Opacity = 1.0;
                              StartFadeOutAnimation(); 
-                        }
-                        else
-                        {
-                             Debug.WriteLine("[OverlayWindow] Champion not found, portrait already fading or faded. Zone updated.");
                         }
                     }
                     else // --- No last known location --- 
@@ -298,9 +246,18 @@ namespace JungleTracker
                      ChampionPortraitControl.Opacity = 0.0;
                  }
             }
+            finally
+            {
+                // --- IMPORTANT: Dispose the bitmap received from the service ---
+                minimapBitmap?.Dispose();
+            }
         }
 
-        // Update the position of the champion portrait based on the match location
+        /// <summary>
+        /// Updates the position of the champion portrait based on its detected location on the minimap.
+        /// Calculates padding and adjusts coordinates relative to the overlay size.
+        /// </summary>
+        /// <param name="matchLocation">The location where the champion was detected within the captured minimap area.</param>
         private void UpdateChampionPortraitPosition(System.Drawing.Point matchLocation)
         {
             if (ChampionPortraitControl == null) return; // Safety check
@@ -315,7 +272,7 @@ namespace JungleTracker
             double adjustedMatchX = matchLocation.X + padding;
             double adjustedMatchY = matchLocation.Y + padding;
 
-            // --- Use the UserControl's actual dimensions for centering ---
+            // Use the UserControl's actual dimensions for centering
             double controlWidth = ChampionPortraitControl.ActualWidth > 0 ? ChampionPortraitControl.ActualWidth : ChampionPortraitControl.Width;
             double controlHeight = ChampionPortraitControl.ActualHeight > 0 ? ChampionPortraitControl.ActualHeight : ChampionPortraitControl.Height;
 
@@ -348,7 +305,11 @@ namespace JungleTracker
             ChampionPortraitControl.Margin = new Thickness(x, y, 0, 0);
         }
 
-        // --- New method to update the zone highlight ---
+        /// <summary>
+        /// Updates the visibility and fill of the zone polygons based on the last known location.
+        /// Hides all polygons, then highlights the one containing the location (if found).
+        /// </summary>
+        /// <param name="lastKnownLocation">The last known location of the champion within the captured minimap area.</param>
         private void UpdateZoneHighlight(System.Drawing.Point lastKnownLocation)
         {
             HideAllZonePolygons(); // Start by resetting all fills (and hiding if not debug)
@@ -397,17 +358,12 @@ namespace JungleTracker
             }
         }
 
-        // --- Helper to hide all polygons ---
+        /// <summary>
+        /// Resets all zone polygons to their default fill color.
+        /// If not in DEBUG_MODE, also sets their visibility to Collapsed.
+        /// </summary>
         private void HideAllZonePolygons()
         {
-            // Don't do anything if in debug and polygons are meant to be always visible
-            // if (DEBUG_MODE && _allZonePolygons.Count > 0 && _allZonePolygons[0].IsVisible) 
-            // { 
-            //     // This condition checks if the debug visualization was activated.
-            //     // If so, don't hide them again during normal operation in debug mode.
-            //     return;
-            // }
-
             if (_allZonePolygons == null) return;
 
             foreach (var polygon in _allZonePolygons)
@@ -417,11 +373,12 @@ namespace JungleTracker
                  {
                     polygon.Visibility = Visibility.Collapsed;
                  }
-                 // In debug mode, they remain visible but are reset to red fill.
             }
         }
 
-        // Animation methods
+        /// <summary>
+        /// Starts the fade-out animation for the champion portrait.
+        /// </summary>
         private void StartFadeOutAnimation()
         {
             // Removed _isPortraitFadingOut check here, ProcessMinimapScreenshot ensures it's only called when needed
@@ -459,6 +416,9 @@ namespace JungleTracker
             Debug.WriteLine("[OverlayWindow] Started fade out animation on ChampionPortraitControl");
         }
 
+        /// <summary>
+        /// Stops the active fade-out animation for the champion portrait and resets the fading flag.
+        /// </summary>
         private void StopFadeOutAnimation()
         {
              if (_isPortraitFadingOut)
@@ -476,102 +436,14 @@ namespace JungleTracker
              }
         }
 
-        // BitBlt-based capture
-        private void AttemptCapture()
-        {
-            if (_captureHwnd == IntPtr.Zero || !IsLeagueOfLegendsFocused())
-            {
-                // Don't attempt capture if we don't have a target window or if game is not focused
-                return;
-            }
+        // Removed AttemptCapture() method
 
-            string savedFilePath = null;
-            try
-            {
-                // Get the window size
-                GetWindowRect(_captureHwnd, out RECT rect);
-                int width = rect.right - rect.left;
-                int height = rect.bottom - rect.top;
-                
-                if (width <= 0 || height <= 0)
-                {
-                    Debug.WriteLine("Invalid window dimensions");
-                    return;
-                }
-
-                // Create a bitmap to hold the captured image
-                using (Bitmap bitmap = new Bitmap(width, height))
-                {
-                    using (Graphics graphics = Graphics.FromImage(bitmap))
-                    {
-                        // Get device context for the bitmap
-                        IntPtr hdc = graphics.GetHdc();
-                        bool success = false;
-                        
-                        try
-                        {
-                            // Use PrintWindow with RENDERFULLCONTENT flag instead of BitBlt
-                            success = PrintWindow(_captureHwnd, hdc, PW_RENDERFULLCONTENT);
-                        }
-                        finally
-                        {
-                            graphics.ReleaseHdc(hdc);
-                        }
-                        
-                        if (!success)
-                        {
-                            Debug.WriteLine("PrintWindow failed");
-                            return;
-                        }
-                    }
-
-                    // Calculate minimap coordinates WITHIN the captured window
-                    int minimapAreaX = width - (int)_overlaySize;
-                    int minimapAreaY = height - (int)_overlaySize;
-
-                    // Calculate padding to center the capture area within the minimap area
-                    int padding = (_overlaySize > _captureSize && _captureSize > 0) ? (int)((_overlaySize - _captureSize) / 2.0) : 0;
-
-                    // Calculate the top-left corner of the actual area to capture, applying padding
-                    int captureX = minimapAreaX + padding;
-                    int captureY = minimapAreaY + padding;
-                    int captureWidth = (int)_captureSize; // Use the new capture size
-                    int captureHeight = (int)_captureSize; // Use the new capture size
-                    
-                    // Ensure coordinates are valid for cropping
-                    if (captureX < 0 || captureY < 0 || 
-                        captureX + captureWidth > width || 
-                        captureY + captureHeight > height ||
-                        captureWidth <= 0 || captureHeight <= 0) // Check capture dimensions too
-                    {
-                        Debug.WriteLine($"Calculated capture coordinates are out of bounds or invalid size. CaptureX:{captureX}, CaptureY:{captureY}, CaptureW:{captureWidth}, CaptureH:{captureHeight}, WindowW:{width}, WindowH:{height}");
-                        return; // Don't proceed if crop is invalid
-                    }
-                    
-                    // Crop the full bitmap to just the desired capture area
-                    using (Bitmap minimapImage = bitmap.Clone(
-                        new System.Drawing.Rectangle(captureX, captureY, captureWidth, captureHeight), // Use calculated capture coords/size
-                        bitmap.PixelFormat))
-                    {
-                        // Save screenshot with timestamp
-                        savedFilePath = System.IO.Path.Combine(_screenshotFolder,
-                                     $"minimap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
-                        minimapImage.Save(savedFilePath, ImageFormat.Png);
-                        
-                        // Store the latest minimap screenshot for processing
-                        _latestMinimapScreenshot?.Dispose();
-                        _latestMinimapScreenshot = new Bitmap(minimapImage);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                savedFilePath = null;
-                Debug.WriteLine($"Error during capture/processing: {ex.Message}");
-            }
-        }
-
-        // --- UI and Lifecycle ---
+        /// <summary>
+        /// Shows the overlay window, calculates its size and position based on settings,
+        /// updates zone transforms, starts the capture service, and makes the window visible.
+        /// </summary>
+        /// <param name="location">The corner of the screen where the overlay should be placed ("Top Left", "Top Right", etc.).</param>
+        /// <param name="scale">The scale percentage (0-100) used to determine the overlay size.</param>
         public void ShowOverlay(string location, int scale)
         {
             // Calculate size and initial position
@@ -607,69 +479,34 @@ namespace JungleTracker
                     break;
             }
             
-            // Only set up capture if we don't already have a window handle
-            if (_captureHwnd == IntPtr.Zero)
+            // --- Configure and Start Capture Service ---
+            if (_minimapCaptureService != null)
             {
                 try
                 {
-                    // Find the League of Legends window
-                    Process[] processes = Process.GetProcessesByName("League of Legends");
+                    Debug.WriteLine($"[OverlayWindow] Configuring capture service: Overlay={_overlaySize}, Capture={_captureSize}");
+                    _minimapCaptureService.UpdateCaptureParameters(_overlaySize, _captureSize);
                     
-                    if (processes.Length == 0)
+                    Debug.WriteLine("[OverlayWindow] Attempting to start capture service...");
+                    if (!_minimapCaptureService.Start())
                     {
-                        // For testing purposes, allow any window with a title
-                        Debug.WriteLine("League of Legends not found. Will try to find any visible window for testing...");
-                        Process[] allProcesses = Process.GetProcesses();
-                        foreach (var proc in allProcesses)
-                        {
-                            if (!string.IsNullOrEmpty(proc.MainWindowTitle) && proc.MainWindowHandle != IntPtr.Zero)
-                            {
-                                _captureHwnd = proc.MainWindowHandle;
-                                _leagueProcessId = (uint)proc.Id;
-                                Debug.WriteLine($"Using '{proc.MainWindowTitle}' window for testing capture.");
-                                break;
-                            }
-                        }
+                         // Start() already shows a MessageBox on failure
+                         Debug.WriteLine("[OverlayWindow] Capture service failed to start. Closing overlay.");
+                         this.Close(); // Close overlay if service cannot start
+                         return;
                     }
-                    else
-                    {
-                        // League of Legends found
-                        _captureHwnd = processes[0].MainWindowHandle;
-                        _leagueProcessId = (uint)processes[0].Id;
-                        Debug.WriteLine("League of Legends window found. Starting capture...");
-                    }
-                    
-                    if (_captureHwnd == IntPtr.Zero)
-                    {
-                        System.Windows.MessageBox.Show("Could not find a suitable window to capture.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        this.Close();
-                        return;
-                    }
-                    
-                    // Get window size to verify it's valid
-                    GetWindowRect(_captureHwnd, out RECT rect);
-                    int width = rect.right - rect.left;
-                    int height = rect.bottom - rect.top;
-                    
-                    if (width <= 0 || height <= 0)
-                    {
-                        System.Windows.MessageBox.Show("Invalid window dimensions.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        this.Close();
-                        return;
-                    }
-                    
-                    // Start the screenshot timer
-                    Console.WriteLine($"Starting capture for window {_captureHwnd} with dimensions {width}x{height}");
-                    _screenshotTimer.Start();
+                    Debug.WriteLine("[OverlayWindow] Capture service started successfully.");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error setting up capture: {ex.Message}");
-                    System.Windows.MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    Debug.WriteLine($"[OverlayWindow] Error starting capture service: {ex.Message}");
+                    System.Windows.MessageBox.Show($"Error initializing capture: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     this.Close();
                     return;
                 }
             }
+            // Removed old timer start and window finding logic
+            // ---
             
             // Show and activate the overlay window
             this.Topmost = true; 
@@ -678,37 +515,50 @@ namespace JungleTracker
             this.Activate();
         }
 
+        /// <summary>
+        /// Event handler for the Window.Closed event. Ensures resources are cleaned up.
+        /// </summary>
         private void OnOverlayClosed(object sender, EventArgs e)
         {
             CleanupCaptureResources();
         }
 
+        /// <summary>
+        /// Cleans up resources used by the overlay, primarily stopping and disposing services.
+        /// </summary>
         private void CleanupCaptureResources()
         {
-             Console.WriteLine("Cleaning up capture resources...");
-            _screenshotTimer?.Stop();
-            _screenshotTimer?.Dispose();
+             Debug.WriteLine("[OverlayWindow] Cleaning up resources...");
             
-            // Dispose of the minimap scanner
+            // Dispose of the minimap capture service
+            _minimapCaptureService?.Stop(); // Ensure it's stopped first
+            _minimapCaptureService?.Dispose();
+            _minimapCaptureService = null;
+            
+            // Dispose of the minimap scanner service
             _minimapScanner?.Dispose();
             _minimapScanner = null;
             
-            // Dispose of the latest screenshot
-            _latestMinimapScreenshot?.Dispose();
-            _latestMinimapScreenshot = null;
-            
-            // Clear capture handle
-            _captureHwnd = IntPtr.Zero;
+            Debug.WriteLine("[OverlayWindow] Resource cleanup complete.");
         }
 
-        // Screenshot interval control - still useful
+        /// <summary>
+        /// Updates the screenshot interval used by the MinimapCaptureService.
+        /// </summary>
+        /// <param name="milliseconds">The desired interval between captures in milliseconds.</param>
         internal void SetScreenshotInterval(int milliseconds)
         {
-            if (_screenshotTimer != null && milliseconds > 0)
-                _screenshotTimer.Interval = milliseconds;
+            if (_minimapCaptureService != null && milliseconds > 0)
+            {
+                 Debug.WriteLine($"[OverlayWindow] Setting capture interval via service to {milliseconds}ms");
+                 _minimapCaptureService.SetScreenshotInterval(milliseconds);
+            }
         }
 
-        // Add this method to handle the game closing
+        /// <summary>
+        /// Handles the scenario when the League of Legends game process is closed.
+        /// Stops animations, hides UI elements, and resets state.
+        /// </summary>
         public void HandleGameClosed()
         {
             // Ensure this runs on the UI thread if called from elsewhere
@@ -743,12 +593,16 @@ namespace JungleTracker
             // 6. Hide the zone polygon
             HideAllZonePolygons();
 
-             // 6. Optionally stop the timer? Or let it run idly? Stopping might be safer.
-             // _screenshotTimer?.Stop();
-             // Debug.WriteLine("[OverlayWindow] Screenshot timer stopped due to game close.");
+             // 7. Capture service will stop automatically when game loses focus/closes.
+             // No explicit stop call needed here anymore.
         }
 
-        // Make sure SetEnemyJunglerInfo potentially restarts the timer if stopped above
+        /// <summary>
+        /// Sets the information for the enemy jungler to be tracked.
+        /// Resets the UI state (hides portrait, stops animation, clears last location).
+        /// </summary>
+        /// <param name="championName">The name of the enemy jungler champion.</param>
+        /// <param name="team">The team identifier for the enemy jungler (e.g., "Blue" or "Red").</param>
         public void SetEnemyJunglerInfo(string championName, string team)
         {
              if (ChampionPortraitControl == null) return; // Simplified null check
@@ -763,15 +617,15 @@ namespace JungleTracker
             ChampionPortraitControl.Visibility = Visibility.Collapsed;
             HideAllZonePolygons(); // Hide zone polygon when info is reset
 
-            // If timer was stopped in HandleGameClosed, restart it here
-            // if (_screenshotTimer != null && !_screenshotTimer.Enabled)
-            // {
-            //     _screenshotTimer.Start();
-            //     Debug.WriteLine("[OverlayWindow] Screenshot timer restarted by SetEnemyJunglerInfo.");
-            // }
+            // Capture service will resume automatically when game is focused again.
+            // No explicit timer start needed here.
         }
 
-        // --- New method to update canvas transforms based on overlay/capture size ---
+        /// <summary>
+        /// Updates the RenderTransform (Scale and Translate) of the ZoneHighlightCanvas
+        /// based on the current overlay and capture sizes.
+        /// This ensures the zone polygons scale and position correctly relative to the captured minimap area.
+        /// </summary>
         private void UpdateZoneTransforms()
         {
             if (_captureSize <= 0 || ZoneScaleTransform == null || ZoneTranslateTransform == null) return;
