@@ -41,22 +41,20 @@ namespace JungleTracker
         private double _overlaySize;
         private double _captureSize;
 
-        // Add fields for animation
-        private Storyboard? _fadeOutStoryboard;
-        private bool _isPortraitFadingOut = false;
+        // Animation fields moved to PortraitManager
         private System.Drawing.Point? _lastKnownLocation;
 
-        // Add field for the minimap scanner service
+        // --- Services and Managers ---
         private MinimapScannerService _minimapScanner;
-        // --- Add field for the minimap capture service ---
         private MinimapCaptureService _minimapCaptureService; 
+        private PortraitManager _enemyJunglerPortraitManager; 
 
         // List to hold references to the XAML zone polygons
         private List<Polygon> _allZonePolygons;
 
         // --- Brushes for Zone Highlighting ---
-        private static readonly System.Windows.Media.Brush _defaultZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 255, 0, 0)); // #55FF0000
-        private static readonly System.Windows.Media.Brush _highlightZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 255, 255, 0)); // #55FFFF00
+        private static readonly System.Windows.Media.Brush _defaultZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 255, 0, 0)); // #55FF0000
+        private static readonly System.Windows.Media.Brush _highlightZoneFill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 255, 255, 0)); // #55FFFF00
 
         /// <summary>
         /// Initializes a new instance of the OverlayWindow class.
@@ -72,6 +70,9 @@ namespace JungleTracker
             this.ResizeMode = ResizeMode.NoResize;
             
             InitializeComponent();
+            
+            // --- Initialize Managers and Services ---
+            _enemyJunglerPortraitManager = new PortraitManager(ChampionPortraitControl); // Use renamed field
             
             // Populate the list of zone polygons AFTER InitializeComponent
             _allZonePolygons = new List<Polygon>
@@ -99,10 +100,7 @@ namespace JungleTracker
             // Add a source initialize handler to make sure window style is set after window handle is created
             this.SourceInitialized += OverlayWindow_SourceInitialized;
             
-            // Create the minimap scanner service
             _minimapScanner = new MinimapScannerService();
-
-            // --- Create the minimap capture service ---
             _minimapCaptureService = new MinimapCaptureService(DEFAULT_SCREENSHOT_INTERVAL); // No process name needed
             _minimapCaptureService.MinimapImageCaptured += OnMinimapImageCaptured; // Subscribe to event
 
@@ -189,46 +187,33 @@ namespace JungleTracker
 
                 if (matchLocation.HasValue)
                 {
-                    // --- Champion found ---
                     _lastKnownLocation = matchLocation;
+                    _enemyJunglerPortraitManager.Hide(); 
 
-                    if (_isPortraitFadingOut)
-                    {
-                        StopFadeOutAnimation(); // Stop fade-out
-                    }
-
-                    ChampionPortraitControl.Visibility = Visibility.Collapsed;
-                    ChampionPortraitControl.Opacity = 0.0;
                     HideAllZonePolygons(); // Hide zone polygon if champion is found
 
                     Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait and zone.");
                 }
-                else // --- Champion NOT found ---
+                else 
                 {
                     if (_lastKnownLocation.HasValue)
                     {
-                        // Highlight the correct zone and move the portrait to the last known location
+                        // Highlight the correct zone
                         UpdateZoneHighlight(_lastKnownLocation.Value);
-                        UpdateChampionPortraitPosition(_lastKnownLocation.Value); 
+                        
+                        _enemyJunglerPortraitManager.UpdatePosition(_lastKnownLocation.Value, _overlaySize, _captureSize);
 
-                        // Only start the fade-out if the portrait is not already fading out
-                        if (!_isPortraitFadingOut)
+                        // Only start the fade-out if the portrait is not already fading
+                        if (!_enemyJunglerPortraitManager.IsFadingOut) 
                         {
-                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out and showing zone."); // Message updated
-                             ChampionPortraitControl.Visibility = Visibility.Visible;
-                             ChampionPortraitControl.Opacity = 1.0;
-                             StartFadeOutAnimation(); 
+                             Debug.WriteLine("[OverlayWindow] Champion not found. Starting fade-out and showing zone.");
+                             _enemyJunglerPortraitManager.StartFadeOut(); 
                         }
                     }
                     else // --- No last known location --- 
                     { 
                         Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
-                        if (_isPortraitFadingOut) 
-                        {
-                             StopFadeOutAnimation(); 
-                        }
-                        ChampionPortraitControl.Visibility = Visibility.Collapsed;
-                        ChampionPortraitControl.Opacity = 0.0;
+                        _enemyJunglerPortraitManager.Hide(); 
                         HideAllZonePolygons(); // Ensure zone is hidden
                     }
                 }
@@ -236,73 +221,13 @@ namespace JungleTracker
             catch (Exception ex)
             {
                 Debug.WriteLine($"[OverlayWindow] Error processing minimap screenshot: {ex.Message}");
-                 if (ChampionPortraitControl != null)
-                 {
-                     if (_isPortraitFadingOut)
-                     {
-                         StopFadeOutAnimation();
-                     }
-                     ChampionPortraitControl.Visibility = Visibility.Collapsed;
-                     ChampionPortraitControl.Opacity = 0.0;
-                 }
+                 _enemyJunglerPortraitManager?.Hide(); 
             }
             finally
             {
                 // --- IMPORTANT: Dispose the bitmap received from the service ---
                 minimapBitmap?.Dispose();
             }
-        }
-
-        /// <summary>
-        /// Updates the position of the champion portrait based on its detected location on the minimap.
-        /// Calculates padding and adjusts coordinates relative to the overlay size.
-        /// </summary>
-        /// <param name="matchLocation">The location where the champion was detected within the captured minimap area.</param>
-        private void UpdateChampionPortraitPosition(System.Drawing.Point matchLocation)
-        {
-            if (ChampionPortraitControl == null) return; // Safety check
-
-            // --- Calculate padding ---
-            // This is the offset between the full overlay size and the captured area size
-            double padding = (_overlaySize > _captureSize && _captureSize > 0) ? (_overlaySize - _captureSize) / 2.0 : 0;
-
-            // --- Adjust match location based on padding ---
-            // Since the scan was done on a smaller, centered image, add the padding
-            // back to the found coordinates to place the portrait relative to the full overlay.
-            double adjustedMatchX = matchLocation.X + padding;
-            double adjustedMatchY = matchLocation.Y + padding;
-
-            // Use the UserControl's actual dimensions for centering
-            double controlWidth = ChampionPortraitControl.ActualWidth > 0 ? ChampionPortraitControl.ActualWidth : ChampionPortraitControl.Width;
-            double controlHeight = ChampionPortraitControl.ActualHeight > 0 ? ChampionPortraitControl.ActualHeight : ChampionPortraitControl.Height;
-
-            // Fallback if layout hasn't completed, use RenderSize or specified Width/Height
-             if (controlWidth <= 0 || controlHeight <= 0)
-             {
-                 if (ChampionPortraitControl.RenderSize.Width > 0 && ChampionPortraitControl.RenderSize.Height > 0) {
-                    controlWidth = ChampionPortraitControl.RenderSize.Width;
-                    controlHeight = ChampionPortraitControl.RenderSize.Height;
-                 } else {
-                    Debug.WriteLine($"[OverlayWindow] Warning: Cannot determine valid dimensions for ChampionPortraitControl in UpdatePosition. Using default size ({ChampionPortraitControl.Width}x{ChampionPortraitControl.Height}).");
-                    controlWidth = ChampionPortraitControl.Width; // Use defined Width/Height as last resort
-                    controlHeight = ChampionPortraitControl.Height;
-                     if (controlWidth <= 0 || controlHeight <= 0) {
-                          Debug.WriteLine($"[OverlayWindow] Error: ChampionPortraitControl Width/Height are invalid ({controlWidth}x{controlHeight}). Cannot update position.");
-                          return; // Cannot position if size is invalid
-                     }
-                 }
-             }
-            // --- End of dimension calculation ---
-
-            double x = adjustedMatchX - (controlWidth / 2); // Use adjusted coordinates
-            double y = adjustedMatchY - (controlHeight / 2); // Use adjusted coordinates
-
-            // Ensure staying within overlay bounds (using control's dimensions)
-            x = Math.Max(0, Math.Min(x, _overlaySize - controlWidth));
-            y = Math.Max(0, Math.Min(y, _overlaySize - controlHeight));
-
-            // Update the Margin of the ChampionPortraitControl itself
-            ChampionPortraitControl.Margin = new Thickness(x, y, 0, 0);
         }
 
         /// <summary>
@@ -377,68 +302,6 @@ namespace JungleTracker
         }
 
         /// <summary>
-        /// Starts the fade-out animation for the champion portrait.
-        /// </summary>
-        private void StartFadeOutAnimation()
-        {
-            // Removed _isPortraitFadingOut check here, ProcessMinimapScreenshot ensures it's only called when needed
-            if (ChampionPortraitControl == null) return;
-
-            _isPortraitFadingOut = true; // Set the flag *before* starting
-            _fadeOutStoryboard = new Storyboard();
-            DoubleAnimation fadeOutAnimation = new DoubleAnimation
-            {
-                From = 1.0,
-                To = FINAL_FADE_OPACITY, // Fade to the desired final opacity
-                Duration = new Duration(TimeSpan.FromMilliseconds(FADE_DURATION_MS)),
-                // FillBehavior defaults to HoldEnd, which is what we want now
-            };
-
-            Storyboard.SetTarget(fadeOutAnimation, ChampionPortraitControl);
-            Storyboard.SetTargetProperty(fadeOutAnimation, new PropertyPath(OpacityProperty));
-
-            // --- Modified Completed Handler ---
-            // We no longer hide the control or reset the flag here.
-            // We just clear the storyboard reference *if* the flag is still true
-            // (meaning StopFadeOutAnimation wasn't called prematurely).
-            fadeOutAnimation.Completed += (s, e) => {
-                 if (_isPortraitFadingOut) // Check if still supposed to be fading
-                 {
-                    _fadeOutStoryboard = null; // Animation is done, clear reference
-                    Debug.WriteLine($"[OverlayWindow] Fade out completed. Opacity held at {FINAL_FADE_OPACITY}.");
-                 } else {
-                    Debug.WriteLine("[OverlayWindow] Fade out completed, but StopFadeOutAnimation was called before completion.");
-                 }
-            };
-
-            _fadeOutStoryboard.Children.Add(fadeOutAnimation);
-            _fadeOutStoryboard.Begin(ChampionPortraitControl, HandoffBehavior.SnapshotAndReplace, true);
-            Debug.WriteLine("[OverlayWindow] Started fade out animation on ChampionPortraitControl");
-        }
-
-        /// <summary>
-        /// Stops the active fade-out animation for the champion portrait and resets the fading flag.
-        /// </summary>
-        private void StopFadeOutAnimation()
-        {
-             if (_isPortraitFadingOut)
-             {
-                 if (_fadeOutStoryboard != null)
-                 {
-                     _fadeOutStoryboard.Stop(ChampionPortraitControl);
-                     _fadeOutStoryboard = null;
-                     Debug.WriteLine("[OverlayWindow] Stopped active fade out animation.");
-                 } else {
-                      Debug.WriteLine("[OverlayWindow] Stopping fade state (animation already completed).");
-                 }
-
-                 _isPortraitFadingOut = false;
-             }
-        }
-
-        // Removed AttemptCapture() method
-
-        /// <summary>
         /// Shows the overlay window, calculates its size and position based on settings,
         /// updates zone transforms, starts the capture service, and makes the window visible.
         /// </summary>
@@ -505,8 +368,6 @@ namespace JungleTracker
                     return;
                 }
             }
-            // Removed old timer start and window finding logic
-            // ---
             
             // Show and activate the overlay window
             this.Topmost = true; 
@@ -543,19 +404,6 @@ namespace JungleTracker
         }
 
         /// <summary>
-        /// Updates the screenshot interval used by the MinimapCaptureService.
-        /// </summary>
-        /// <param name="milliseconds">The desired interval between captures in milliseconds.</param>
-        internal void SetScreenshotInterval(int milliseconds)
-        {
-            if (_minimapCaptureService != null && milliseconds > 0)
-            {
-                 Debug.WriteLine($"[OverlayWindow] Setting capture interval via service to {milliseconds}ms");
-                 _minimapCaptureService.SetScreenshotInterval(milliseconds);
-            }
-        }
-
-        /// <summary>
         /// Handles the scenario when the League of Legends game process is closed.
         /// Stops animations, hides UI elements, and resets state.
         /// </summary>
@@ -571,14 +419,11 @@ namespace JungleTracker
             Debug.WriteLine("[OverlayWindow] Handling game closed event.");
 
             // 1. Stop any ongoing fade-out animation and reset its state flag
-            StopFadeOutAnimation();
+            _enemyJunglerPortraitManager?.Reset(); 
 
-            // 2. Hide the portrait control immediately
+            // 2. Hide the portrait control immediately (handled by Reset)
             if (ChampionPortraitControl != null)
             {
-                ChampionPortraitControl.Visibility = Visibility.Collapsed;
-                ChampionPortraitControl.Opacity = 0.0;
-
                 // 3. Optionally clear the champion info (triggers image source nulling)
                  ChampionPortraitControl.ChampionName = string.Empty;
                  ChampionPortraitControl.Team = string.Empty;
@@ -612,9 +457,9 @@ namespace JungleTracker
             ChampionPortraitControl.Team = team;
 
             _lastKnownLocation = null;
-            StopFadeOutAnimation();
-            ChampionPortraitControl.Opacity = 0.0;
-            ChampionPortraitControl.Visibility = Visibility.Collapsed;
+            // --- Use Portrait Manager to Reset/Hide --- 
+            _enemyJunglerPortraitManager.Reset(); // Use renamed field
+            // --- 
             HideAllZonePolygons(); // Hide zone polygon when info is reset
 
             // Capture service will resume automatically when game is focused again.
