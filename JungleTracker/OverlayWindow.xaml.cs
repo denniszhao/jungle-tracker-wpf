@@ -48,6 +48,7 @@ namespace JungleTracker
         private MinimapScannerService _minimapScanner;
         private MinimapCaptureService _minimapCaptureService; 
         private PortraitManager _enemyJunglerPortraitManager; 
+        private ZoneManager _zoneManager; // Add ZoneManager field
 
         // List to hold references to the XAML zone polygons
         private List<Polygon> _allZonePolygons;
@@ -82,19 +83,21 @@ namespace JungleTracker
                 TopRiverZonePolygon, MidZonePolygon, BotRiverZonePolygon
             };
             
+            _zoneManager = new ZoneManager(
+                _allZonePolygons,
+                ZoneScaleTransform,
+                ZoneTranslateTransform,
+                _defaultZoneFill, 
+                _highlightZoneFill,
+                DEBUG_MODE
+            );
+
             // Apply debug border if in debug mode
             if (DEBUG_MODE)
             {
                 MainBorder.BorderBrush = System.Windows.Media.Brushes.Red;
                 MainBorder.BorderThickness = new Thickness(3);
-
-                // --- Make all zone polygons visible and semi-transparent for debugging --- 
-                foreach (var polygon in _allZonePolygons)
-                {
-                    polygon.Visibility = Visibility.Visible;
-                    polygon.Fill = _defaultZoneFill; 
-                }
-                Debug.WriteLine("[OverlayWindow DEBUG] Made all zone polygons visible in Constructor.");
+                // Debug zone visualization moved to ZoneManager constructor
             }
             
             // Add a source initialize handler to make sure window style is set after window handle is created
@@ -189,8 +192,7 @@ namespace JungleTracker
                 {
                     _lastKnownLocation = matchLocation;
                     _enemyJunglerPortraitManager.Hide(); 
-
-                    HideAllZonePolygons(); // Hide zone polygon if champion is found
+                    _zoneManager.HideAll();
 
                     Debug.WriteLine($"[OverlayWindow] Champion found at {matchLocation.Value.X}, {matchLocation.Value.Y}. Hiding portrait and zone.");
                 }
@@ -198,9 +200,7 @@ namespace JungleTracker
                 {
                     if (_lastKnownLocation.HasValue)
                     {
-                        // Highlight the correct zone
-                        UpdateZoneHighlight(_lastKnownLocation.Value);
-                        
+                        _zoneManager.UpdateHighlight(_lastKnownLocation.Value, _captureSize);
                         _enemyJunglerPortraitManager.UpdatePosition(_lastKnownLocation.Value, _overlaySize, _captureSize);
 
                         // Only start the fade-out if the portrait is not already fading
@@ -214,7 +214,7 @@ namespace JungleTracker
                     { 
                         Debug.WriteLine("[OverlayWindow] Champion not found, and no last known location to show.");
                         _enemyJunglerPortraitManager.Hide(); 
-                        HideAllZonePolygons(); // Ensure zone is hidden
+                        _zoneManager.HideAll();
                     }
                 }
             }
@@ -231,77 +231,6 @@ namespace JungleTracker
         }
 
         /// <summary>
-        /// Updates the visibility and fill of the zone polygons based on the last known location.
-        /// Hides all polygons, then highlights the one containing the location (if found).
-        /// </summary>
-        /// <param name="lastKnownLocation">The last known location of the champion within the captured minimap area.</param>
-        private void UpdateZoneHighlight(System.Drawing.Point lastKnownLocation)
-        {
-            HideAllZonePolygons(); // Start by resetting all fills (and hiding if not debug)
-
-            // Calculate scale factor (relative to the 510 reference size used in XAML)
-            double scaleFactor = _captureSize > 0 ? _captureSize / 510.0 : 1.0;
-            if (scaleFactor <= 0) return; // Avoid division by zero or invalid scale
-
-            // Convert last known location (relative to captured image) to the 510x510 reference coordinate system
-            System.Windows.Point referencePoint = new System.Windows.Point(
-                lastKnownLocation.X / scaleFactor,
-                lastKnownLocation.Y / scaleFactor
-            );
-
-            Polygon? foundPolygon = null;
-            foreach (var polygon in _allZonePolygons)
-            {
-                // Use FillContains on the polygon's geometry for accurate hit testing
-                if (polygon.RenderedGeometry != null && polygon.RenderedGeometry.FillContains(referencePoint))
-                {
-                    foundPolygon = polygon;
-                    break; // Found the zone, stop checking (can remove break to highlight multiple)
-                }
-            }
-
-            if (foundPolygon != null)
-            {
-                // In debug mode, all stay visible but found one turns yellow.
-                // In release mode, only the found one becomes visible (and yellow).
-                foundPolygon.Fill = _highlightZoneFill; // Set highlight color
-
-                if (!DEBUG_MODE)
-                {
-                    foundPolygon.Visibility = Visibility.Visible; // Show the found polygon
-                    Debug.WriteLine($"[OverlayWindow] Point {referencePoint} found in polygon {foundPolygon.Name}. Making it visible with highlight.");
-                }
-                else {
-                     // All are already visible in debug, just log the highlight
-                     Debug.WriteLine($"[OverlayWindow DEBUG] Point {referencePoint} found in polygon {foundPolygon.Name}. Applied highlight fill.");
-                }
-            }
-            else
-            {
-                 // No polygon found, HideAllZonePolygons already reset state.
-                 Debug.WriteLine($"[OverlayWindow] Point {referencePoint} not found in any defined zone polygon points list."); 
-            }
-        }
-
-        /// <summary>
-        /// Resets all zone polygons to their default fill color.
-        /// If not in DEBUG_MODE, also sets their visibility to Collapsed.
-        /// </summary>
-        private void HideAllZonePolygons()
-        {
-            if (_allZonePolygons == null) return;
-
-            foreach (var polygon in _allZonePolygons)
-            {
-                 polygon.Fill = _defaultZoneFill; // ALWAYS Reset fill to default
-                 if (!DEBUG_MODE) // ONLY collapse if not in debug mode
-                 {
-                    polygon.Visibility = Visibility.Collapsed;
-                 }
-            }
-        }
-
-        /// <summary>
         /// Shows the overlay window, calculates its size and position based on settings,
         /// updates zone transforms, starts the capture service, and makes the window visible.
         /// </summary>
@@ -314,8 +243,8 @@ namespace JungleTracker
             _captureSize = MIN_CAPTURE_SIZE + (scale / 100.0) * (MAX_CAPTURE_SIZE - MIN_CAPTURE_SIZE); // Calculate capture size
             this.Width = this.Height = _overlaySize; // Overlay window remains the original size
             
-            // --- Update Zone Transforms ---
-            UpdateZoneTransforms();
+            // --- Use Zone Manager to Update Transforms ---
+            _zoneManager.UpdateTransforms(_overlaySize, _captureSize);
             // ---
 
             // Position overlay
@@ -374,6 +303,13 @@ namespace JungleTracker
             this.Show();
             this.Topmost = true;
             this.Activate();
+
+            _zoneManager.HideAll();
+            _enemyJunglerPortraitManager.Reset(); 
+            _zoneManager.HideAll();
+
+            // Capture service will resume automatically when game is focused again.
+            // No explicit timer start needed here.
         }
 
         /// <summary>
@@ -434,9 +370,7 @@ namespace JungleTracker
 
             // 5. Clear the template in the scanner service
             _minimapScanner?.ClearCurrentTemplate();
-
-            // 6. Hide the zone polygon
-            HideAllZonePolygons();
+            _zoneManager.HideAll();
 
              // 7. Capture service will stop automatically when game loses focus/closes.
              // No explicit stop call needed here anymore.
@@ -457,34 +391,11 @@ namespace JungleTracker
             ChampionPortraitControl.Team = team;
 
             _lastKnownLocation = null;
-            // --- Use Portrait Manager to Reset/Hide --- 
-            _enemyJunglerPortraitManager.Reset(); // Use renamed field
-            // --- 
-            HideAllZonePolygons(); // Hide zone polygon when info is reset
+            _enemyJunglerPortraitManager.Reset(); 
+            _zoneManager.HideAll(); 
 
             // Capture service will resume automatically when game is focused again.
             // No explicit timer start needed here.
-        }
-
-        /// <summary>
-        /// Updates the RenderTransform (Scale and Translate) of the ZoneHighlightCanvas
-        /// based on the current overlay and capture sizes.
-        /// This ensures the zone polygons scale and position correctly relative to the captured minimap area.
-        /// </summary>
-        private void UpdateZoneTransforms()
-        {
-            if (_captureSize <= 0 || ZoneScaleTransform == null || ZoneTranslateTransform == null) return;
-
-            // Scale factor relative to the 510x510 reference size the polygons were defined with
-            double scaleFactor = _captureSize / 510.0;
-            double padding = (_overlaySize - _captureSize) / 2.0;
-
-            ZoneScaleTransform.ScaleX = scaleFactor;
-            ZoneScaleTransform.ScaleY = scaleFactor;
-            ZoneTranslateTransform.X = padding;
-            ZoneTranslateTransform.Y = padding;
-
-            Debug.WriteLine($"[OverlayWindow] Updated Zone Transforms: Scale={scaleFactor:F2}, Padding={padding:F1}");
         }
     }
 }
