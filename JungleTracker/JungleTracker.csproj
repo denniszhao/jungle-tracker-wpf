@@ -9,6 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <PackageManifest>package.appxmanifest</PackageManifest>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <ApplicationIcon>Assets\favicon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -352,6 +353,7 @@
     <None Remove="Assets\Champions\champions-altered-red\Zilean.png" />
     <None Remove="Assets\Champions\champions-altered-red\Zoe.png" />
     <None Remove="Assets\Champions\champions-altered-red\Zyra.png" />
+    <None Remove="Assets\favicon.ico" />
   </ItemGroup>
 
   <ItemGroup>
@@ -711,6 +713,10 @@
     <PackageReference Include="OpenCvSharp4.Extensions" Version="4.10.0.20241108" />
     <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
     <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\favicon.ico" />
   </ItemGroup>
 
   <ItemGroup>
