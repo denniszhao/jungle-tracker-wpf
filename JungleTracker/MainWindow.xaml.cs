@@ -13,6 +13,7 @@ using WPFMessageBox = System.Windows.MessageBox;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Timer = System.Timers.Timer;
+using JungleTracker.Properties; // Optional, can use full name below
 
 namespace JungleTracker
 {
@@ -34,26 +35,59 @@ namespace JungleTracker
             _leagueClientService = new LeagueClientService();
             // Initialize the Game State Service
             _gameStateService = new GameStateService(_leagueClientService);
+
+            // Set initial status text (redundant if set in XAML, but safe)
+            // UpdateOverlayStatus(false); // Or let XAML handle initial state
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            // Ask for data consent on first load.
-            var consentWindow = new ConsentWindow();
-            bool? result = consentWindow.ShowDialog();
-            if (result != true)
+            // Check if user has ever interacted with the consent dialog
+            if (!Settings.Default.HasInteractedWithConsent)
             {
-                WPFMessageBox.Show("Consent not given. The application will now close.", "Consent Required", MessageBoxButton.OK, MessageBoxImage.Warning);
-                this.Close();
+                Debug.WriteLine("First interaction: Showing ConsentWindow.");
+                var consentWindow = new ConsentWindow();
+                bool? result = consentWindow.ShowDialog();
+
+                bool consentWasGiven = (result == true);
+                
+                // Store the actual decision
+                Settings.Default.HasGivenDataConsent = consentWasGiven;
+                // Mark that the interaction has happened
+                Settings.Default.HasInteractedWithConsent = true;
+                // Save both settings
+                Settings.Default.Save();
+
+                // Optional: Show a message if denied, but don't prevent startup
+                if (!consentWasGiven)
+                {
+                     Debug.WriteLine("Consent denied by user during first interaction.");
+                     // You could potentially still show this, but it doesn't block anything
+                     // WPFMessageBox.Show("Data collection consent denied. You can change this in settings.", 
+                     //                   "Consent Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    Debug.WriteLine("Consent granted by user during first interaction.");
+                }
             }
-            
-            // Start monitoring for League of Legends
+            else
+            {
+                 Debug.WriteLine("User has previously interacted with consent. Consent state: " + Settings.Default.HasGivenDataConsent);
+            }
+
+            // ---- Application Startup Logic ----
+            // Start monitoring regardless of the HasGivenDataConsent setting value
+            Debug.WriteLine("Proceeding with application startup and monitoring.");
             StartMonitoringForLeague();
+            
+            // The CheckBox UI is automatically updated via the TwoWay binding
         }
 
         // Monitor for League of Legends being launched
         private void StartMonitoringForLeague(int checkIntervalMs = 2000)
         {
+            Debug.WriteLine("Starting League monitoring process...");
             // Stop any existing timer
             _leagueMonitorTimer?.Stop();
             _leagueMonitorTimer?.Dispose();
@@ -70,12 +104,10 @@ namespace JungleTracker
                 {
                     bool isRunningNow = IsLeagueGameRunning();
                     
-                    // If app just started running
                     if (isRunningNow && !_wasLeagueRunning)
                     {
                         await OnLeagueLaunchedAsync();
                     }
-                    // If app just closed
                     else if (!isRunningNow && _wasLeagueRunning)
                     {
                         OnLeagueClosed();
@@ -93,7 +125,7 @@ namespace JungleTracker
         // Handle League of Legends launch
         private async Task OnLeagueLaunchedAsync()
         {
-            Debug.WriteLine("League of Legends has launched!");
+            Debug.WriteLine("League of Legends has launched! Attempting data retrieval...");
             
             // Wait a bit for the game to initialize
             await Task.Delay(5000);
@@ -147,15 +179,15 @@ namespace JungleTracker
         {
             if (_overlayWindow == null)
             {
-                // Only allow overlay if the game is running
-                if (!IsLeagueGameRunning() && !IsRiotClientRunning())
-                {
-                    WPFMessageBox.Show("League of Legends is not running. Please start the game or client first.", 
-                        "Game Not Running", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
+                // Check if game/client is running (this is still relevant)
+                 if (!IsLeagueGameRunning() && !IsRiotClientRunning())
+                 {
+                     WPFMessageBox.Show("League of Legends is not running. Please start the game or client first.", 
+                         "Game Not Running", MessageBoxButton.OK, MessageBoxImage.Information);
+                     return;
+                 }
 
-                // Create overlay window with reference to GameStateService
+                // Create overlay window
                 _overlayWindow = new OverlayWindow(_gameStateService);
                 _overlayWindow.Closed += OverlayWindow_Closed;
 
@@ -163,11 +195,10 @@ namespace JungleTracker
                 if (IsLeagueGameRunning())
                 {
                     Debug.WriteLine("Getting enemy jungler info after overlay click");
-                    bool gameDataFound = await _gameStateService.InitializeEnemyJunglerDataAsync();
+                    bool gameDataFound = await _gameStateService.InitializeEnemyJunglerDataAsync(); 
                     if (gameDataFound)
                     {
                         Debug.WriteLine($"Enemy jungler detected, passing to Overlay: {_gameStateService.EnemyJunglerChampionName}");
-                        // Pass both champion name and team
                         _overlayWindow.SetEnemyJunglerInfo(
                             _gameStateService.EnemyJunglerChampionName,
                             _gameStateService.EnemyJunglerTeam);
@@ -180,10 +211,11 @@ namespace JungleTracker
                 _overlayWindow.ShowOverlay(location, scale);
                 
                 ToggleOverlayButton.Content = "Close Overlay";
+                UpdateOverlayStatus(true); // Update status to Open
             }
             else
             {
-                _overlayWindow.Close();
+                _overlayWindow.Close(); 
             }
         }
 
@@ -204,6 +236,22 @@ namespace JungleTracker
         {
             _overlayWindow = null;
             ToggleOverlayButton.Content = "Open Overlay";
+            UpdateOverlayStatus(false); // Update status to Closed
+        }
+
+        // Helper method to update the status TextBlock
+        private void UpdateOverlayStatus(bool isOpen)
+        {
+            if (isOpen)
+            {
+                OverlayStatusTextBlock.Text = "Overlay Open";
+                OverlayStatusTextBlock.Foreground = System.Windows.Media.Brushes.Green;
+            }
+            else
+            {
+                OverlayStatusTextBlock.Text = "Overlay Closed";
+                OverlayStatusTextBlock.Foreground = System.Windows.Media.Brushes.Red;
+            }
         }
 
         private void MainWindow_Closing(object? sender, CancelEventArgs e)

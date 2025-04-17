@@ -96,12 +96,21 @@ namespace JungleTracker
                 DEBUG_MODE
             );
 
-            // Apply debug border if in debug mode
+            // Apply debug or production border
             if (DEBUG_MODE)
             {
+                // Debug: Thick Red Border
                 MainBorder.BorderBrush = System.Windows.Media.Brushes.Red;
                 MainBorder.BorderThickness = new Thickness(3);
-                // Debug zone visualization moved to ZoneManager constructor
+                Debug.WriteLine("[OverlayWindow] DEBUG_MODE enabled: Applying Red border.");
+            }
+            else
+            {
+                // Production: Semi-Transparent Green Border
+                // Adjust Alpha (AA) for transparency (00=invisible, FF=opaque)
+                MainBorder.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x44, 0x00, 0xFF, 0x00)); // Semi-transparent bright green
+                MainBorder.BorderThickness = new Thickness(2); // Adjust thickness as desired
+                Debug.WriteLine("[OverlayWindow] DEBUG_MODE disabled: Applying Green border.");
             }
             
             // Add a source initialize handler to make sure window style is set after window handle is created
